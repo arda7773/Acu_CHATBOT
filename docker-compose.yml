@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-acuchatbot}
+      POSTGRES_USER: ${POSTGRES_USER:-acuuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-acupassword}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-acuuser} -d ${POSTGRES_DB:-acuchatbot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+
+  selenium:
+    image: seleniarm/standalone-chromium:latest
+    ports:
+      - "4444:4444"
+      - "7900:7900"
+    shm_size: 2gb
+    environment:
+      - SE_NODE_MAX_SESSIONS=2
+      - SE_SESSION_TIMEOUT=300
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4444/wd/hub/status || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  webapp:
+    build: ./webapp
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - SELENIUM_URL=http://selenium:4444/wd/hub
+      - DB_HOST=db
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      selenium:
+        condition: service_healthy
+    volumes:
+      - static_volume:/app/staticfiles
+
+volumes:
+  postgres_data:
+  ollama_data:
+  static_volume:

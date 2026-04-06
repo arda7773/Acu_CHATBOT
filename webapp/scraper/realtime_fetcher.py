@@ -1,0 +1,331 @@
+import re
+import time
+import logging
+from collections import Counter
+
+import requests
+from bs4 import BeautifulSoup
+from django.db.models import Q
+from django.utils import timezone
+
+logger = logging.getLogger(__name__)
+
+HEADERS = {
+    'User-Agent': 'ACU-ChatBot/1.0 (Educational Project - CSE322)',
+    'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
+}
+
+# Common Turkish and English stop words to filter out
+STOP_WORDS = {
+    # Turkish
+    've', 'veya', 'ile', 'bir', 'bu', 'şu', 'da', 'de', 'ki', 'için',
+    'gibi', 'kadar', 'ama', 'fakat', 'ancak', 'çünkü', 'eğer', 'ise',
+    'ne', 'nasıl', 'neden', 'nerede', 'hangi', 'hakkında', 'var', 'yok',
+    'mı', 'mi', 'mu', 'mü', 'olan', 'olan', 'olan', 'olarak', 'daha',
+    'çok', 'en', 'her', 'hiç', 'bazı', 'tüm', 'bütün', 'bana', 'benim',
+    'bilgi', 'ver', 'verir', 'verebilir', 'bilir', 'lütfen',
+    'bölüm', 'bölümü', 'program', 'programı', 'üniversite', 'üniversitesi',
+    # English
+    'the', 'is', 'are', 'was', 'were', 'what', 'how', 'where', 'when',
+    'who', 'which', 'about', 'from', 'that', 'this', 'have', 'has',
+    'not', 'can', 'will', 'would', 'could', 'should', 'tell', 'give',
+    'information', 'please', 'about',
+    'and', 'or', 'but', 'with', 'for', 'its', 'does', 'do',
+}
+
+
+def extract_keywords(text: str) -> list[str]:
+    """Extract meaningful keywords from a question."""
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', ' ', text)
+    words = text.split()
+    return [w for w in words if w not in STOP_WORDS and len(w) > 2]
+
+
+def normalize_text(text: str) -> str:
+    return re.sub(r'\s+', ' ', text.lower()).strip()
+
+
+def is_staff_question(text: str) -> bool:
+    normalized = normalize_text(text)
+    return any(
+        phrase in normalized
+        for phrase in ['akademik kadro', 'hocalar', 'hoca', 'ogretim uyesi', 'öğretim üyesi']
+    )
+
+
+def extract_relevant_snippet(text: str, keywords: list[str], max_chars: int = 1600) -> str:
+    if not text:
+        return ''
+    if not keywords:
+        return text[:max_chars]
+
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    scored_lines = []
+    for line in lines:
+        lowered = normalize_text(line)
+        score = sum(lowered.count(kw) for kw in keywords)
+        if score:
+            scored_lines.append((score, line))
+
+    if scored_lines:
+        scored_lines.sort(key=lambda item: item[0], reverse=True)
+        snippet = '\n'.join(line for _, line in scored_lines[:12])
+        return snippet[:max_chars]
+
+    normalized_text = normalize_text(text)
+    first_pos = min((normalized_text.find(kw) for kw in keywords if kw in normalized_text), default=-1)
+    if first_pos != -1:
+        start = max(0, first_pos - 300)
+        return text[start:start + max_chars]
+
+    return text[:max_chars]
+
+
+def score_page_relevance(question: str, page, keywords: list[str]) -> int:
+    title = normalize_text(page.title or '')
+    description = normalize_text(page.description or '')
+    text = normalize_text(page.text or '')
+    url = normalize_text(page.url or '')
+    question_text = normalize_text(question)
+    asks_for_staff = is_staff_question(question)
+    staff_keywords = {'akademik', 'kadro', 'kadrosu', 'kadrosunu', 'hoca', 'hocalar'}
+    topical_keywords = [kw for kw in keywords if kw not in staff_keywords]
+
+    score = 0
+    for kw in keywords:
+        score += title.count(kw) * 8
+        score += url.count(kw) * 6
+        score += description.count(kw) * 4
+        score += text.count(kw) * 2
+
+    for phrase, count in Counter(keywords).items():
+        if len(phrase) > 4 and phrase in title:
+            score += 10 * count
+        if len(phrase) > 4 and phrase in url:
+            score += 8 * count
+
+    if question_text and question_text in text:
+        score += 12
+
+    if asks_for_staff:
+        if '/akademik-kadro' in url or 'akademik kadro' in title:
+            score += 50
+        if '/ogrenci' in url or 'akademik takvim' in title:
+            score -= 25
+        for kw in topical_keywords:
+            if kw in url:
+                score += 20
+            if kw in title:
+                score += 12
+
+    # Penalize generic or noisy landing pages for specific questions.
+    if page.url.rstrip('/') == 'https://www.acibadem.edu.tr':
+        score -= 20
+    if '/anasayfa' in url:
+        score -= 15
+    if '/duyurular/' in url:
+        score -= 8
+    if page.depth <= 1:
+        score -= 4
+
+    if '/akademik/' in url:
+        score += 6
+    if '/bolumler/' in url:
+        score += 12
+    if '/hakkinda' in url or '/akademik-kadro' in url or '/bolum-baskaninin-mesaji' in url:
+        score += 4
+
+    return score
+
+
+def find_relevant_urls(question: str, max_results: int = 3) -> list[str]:
+    """Search URLIndex for pages relevant to the question."""
+    from scraper.models import URLIndex
+
+    keywords = extract_keywords(question)
+    if not keywords:
+        return []
+    asks_for_staff = is_staff_question(question)
+
+    query = Q()
+    for kw in keywords:
+        query |= Q(path_keywords__icontains=kw)
+        query |= Q(title__icontains=kw)
+        query |= Q(category__icontains=kw)
+
+    return list(URLIndex.objects.filter(query).values_list('url', flat=True)[:max_results])
+
+
+def fetch_page_text(url: str, max_chars: int = 3000) -> str:
+    """
+    Fetch a URL and return clean plain text from its main content.
+    Updates the URL title in the index as a side effect.
+    """
+    try:
+        resp = requests.get(url, timeout=15, headers=HEADERS)
+        resp.raise_for_status()
+        resp.encoding = resp.apparent_encoding
+
+        soup = BeautifulSoup(resp.content, 'html.parser')
+
+        # Remove non-content tags
+        for tag in soup(['nav', 'footer', 'script', 'style', 'header',
+                         'aside', 'form', 'button', 'noscript']):
+            tag.decompose()
+
+        # Prefer semantic content containers
+        main = (
+            soup.find('main') or
+            soup.find(id='content') or
+            soup.find(id='main-content') or
+            soup.find(class_='content') or
+            soup.find(class_='main-content') or
+            soup.find('article') or
+            soup.find('body')
+        )
+
+        text = main.get_text(separator='\n', strip=True) if main else ''
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        clean_text = '\n'.join(lines)
+
+        # Cache the page title back into URLIndex
+        title_tag = soup.find('title')
+        if title_tag and title_tag.text.strip():
+            try:
+                from scraper.models import URLIndex
+                URLIndex.objects.filter(url=url).update(
+                    title=title_tag.text.strip()[:500],
+                    last_fetched=timezone.now(),
+                )
+            except Exception:
+                pass
+
+        return clean_text[:max_chars]
+
+    except requests.RequestException as e:
+        logger.warning(f"Could not fetch {url}: {e}")
+        return ''
+
+
+def search_bologna(question: str, max_results: int = 2) -> list[dict]:
+    """Search pre-scraped Bologna data for relevant academic program info."""
+    from scraper.models import BolognaProgram
+
+    keywords = extract_keywords(question)
+    if not keywords:
+        return []
+
+    query = Q()
+    for kw in keywords:
+        query |= Q(faculty__icontains=kw)
+        query |= Q(department__icontains=kw)
+        query |= Q(program_name__icontains=kw)
+        query |= Q(content__icontains=kw)
+
+    programs = BolognaProgram.objects.filter(query)[:max_results]
+    return [
+        {
+            'program': p.program_name,
+            'faculty': p.faculty,
+            'content': extract_relevant_snippet(p.content, keywords, max_chars=1800),
+            'url': p.url,
+        }
+        for p in programs
+    ]
+
+
+def search_scraped_pages(question: str, max_results: int = 3) -> list[dict]:
+    """Search pre-loaded ACU website pages from the database."""
+    from scraper.models import ScrapedPage
+
+    keywords = extract_keywords(question)
+    if not keywords:
+        return []
+    asks_for_staff = is_staff_question(question)
+
+    query = Q()
+    for kw in keywords:
+        query |= Q(title__icontains=kw)
+        query |= Q(url__icontains=kw)
+        query |= Q(text__icontains=kw)
+        query |= Q(description__icontains=kw)
+
+    candidates = list(ScrapedPage.objects.filter(query))
+    if not candidates:
+        return []
+
+    ranked_pages = sorted(
+        candidates,
+        key=lambda page: score_page_relevance(question, page, keywords),
+        reverse=True,
+    )
+
+    pages = []
+    for page in ranked_pages:
+        if score_page_relevance(question, page, keywords) <= 0:
+            continue
+        pages.append(page)
+        if len(pages) >= max_results:
+            break
+
+    return [
+        {
+            'url': p.url,
+            'title': p.title,
+            'text': (
+                p.text[:2200]
+                if asks_for_staff and '/akademik-kadro' in p.url.lower()
+                else extract_relevant_snippet(p.text, keywords, max_chars=2200)
+            ),
+        }
+        for p in pages
+    ]
+
+
+def get_context_for_question(question: str) -> tuple[str, list[str]]:
+    """
+    Given a user question, return (context_text, source_urls).
+
+    Strategy:
+    1. Search Bologna DB (pre-scraped academic programs).
+    2. Search pre-loaded ACU pages from ScrapedPage DB.
+    3. If still no context, fall back to real-time fetch.
+    """
+    context_parts = []
+    sources = []
+
+    # Step 1: Bologna DB (academic programs, courses, curricula)
+    bologna_results = search_bologna(question)
+    for result in bologna_results:
+        context_parts.append(
+            f"=== {result['faculty']} - {result['program']} (Bologna) ===\n"
+            f"{result['content']}"
+        )
+        if result['url'] not in sources:
+            sources.append(result['url'])
+
+    # Step 2: Pre-scraped ACU pages stored in ScrapedPage
+    scraped_results = search_scraped_pages(question, max_results=2)
+    for result in scraped_results:
+        if result['url'] not in sources:
+            context_parts.append(
+                f"=== {result['title']} ===\n{result['text']}"
+            )
+            sources.append(result['url'])
+
+    # Step 3: Real-time fallback if DB has no relevant data
+    if not context_parts:
+        logger.info("No DB results found, falling back to real-time fetch")
+        urls = find_relevant_urls(question, max_results=2)
+        for url in urls:
+            if url in sources:
+                continue
+            text = fetch_page_text(url)
+            if text:
+                context_parts.append(f"=== Kaynak: {url} ===\n{text}")
+                sources.append(url)
+            time.sleep(0.5)
+
+    context = '\n\n'.join(context_parts)
+    return context, sources
