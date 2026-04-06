@@ -11,14 +11,16 @@ Görevin, öğrencilere ve ziyaretçilere üniversite hakkında doğru, güvenil
 
 TEMEL KURALLAR:
 1. Yanıtlarını YALNIZCA sana verilen bağlam (context) bilgisine dayandır.
-2. Bağlamda bulunmayan bilgileri kesinlikle uydurma veya tahmin etme.
-3. Bağlamda bilgi yoksa şunu söyle: "Bu konuda elimde yeterli bilgi bulunmuyor. Daha fazla bilgi için https://www.acibadem.edu.tr adresini ziyaret edebilir veya üniversiteyle iletişime geçebilirsiniz."
+2. Bağlamda bulunmayan bilgileri KESİNLİKLE uydurma, tahmin etme veya kendi eğitim verisinden tamamlama.
+3. Bağlamda bilgi yoksa SADECE şunu söyle (başka hiçbir şey ekleme):
+   "Bu konuda elimde yeterli bilgi bulunmuyor. Daha fazla bilgi için https://www.acibadem.edu.tr adresini ziyaret edebilir veya üniversiteyle iletişime geçebilirsiniz."
 4. Kullanıcı Türkçe yazıyorsa Türkçe, İngilizce yazıyorsa İngilizce yanıt ver.
 5. Yanıtların net, doğru ve anlaşılır olsun.
 6. Akademik programlar, ders içerikleri, ücretler, kabul koşulları, kampüs, iletişim bilgileri gibi konularda bağlamdaki bilgileri kullan.
 7. Resmi ve yardımcı bir dil kullan.
 8. Türkçe yanıt verirken İngilizce-Türkçe karışık, anlamsız veya bozuk cümleler kurma.
-9. Soruya uygun yeterli bilgi varsa 2-5 cümlelik kısa bir özet ver; yeterli bilgi yoksa 3. kuraldaki metni aynen kullan."""
+9. Liste soruları için bağlamdaki TÜM öğeleri listele, eksik bırakma.
+10. Eğer bağlamda kısmi bilgi varsa bunu belirt: "Bağlamımdaki bilgilere göre..." diyerek başla."""
 
 FALLBACK_ANSWER = (
     "Bu konuda elimde yeterli bilgi bulunmuyor. Daha fazla bilgi için "
@@ -73,10 +75,14 @@ def is_low_quality_answer(answer: str) -> bool:
 
 def get_answer(question: str, context: str) -> str:
     """
-    Send a question with its retrieved context to Ollama (llama3.2:3b)
-    and return the generated answer.
+    Send a question with its retrieved context to Ollama and return the answer.
     """
     if not context or not context.strip():
+        return FALLBACK_ANSWER
+
+    # Reject suspiciously short context — not enough to answer from
+    if len(context.strip()) < 80:
+        logger.warning("Context too short to be useful, returning fallback")
         return FALLBACK_ANSWER
 
     user_message = f"""Aşağıda Acıbadem Üniversitesi web sitesinden alınan güncel bilgiler bulunmaktadır:
@@ -87,10 +93,10 @@ def get_answer(question: str, context: str) -> str:
 
 Kullanıcının sorusu: {question}
 
-Kurallar:
-- Yalnızca yukarıdaki bağlamı kullan.
-- Soruyla ilgili net bilgi varsa kısa ve düzgün bir özet ver.
-- Soruyla ilgili yeterli bilgi yoksa şu cümleyi aynen yaz:
+ZORUNLU KURALLAR:
+- YALNIZCA yukarıdaki bağlamdaki bilgileri kullan. Kendi bilgilerini ASLA kullanma.
+- Liste sorusu ise bağlamdaki tüm öğeleri eksiksiz listele.
+- Bağlamda yeterli bilgi yoksa SADECE şunu yaz (başka hiçbir şey ekleme):
 {FALLBACK_ANSWER}"""
 
     payload = {
