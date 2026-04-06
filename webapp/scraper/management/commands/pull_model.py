@@ -7,7 +7,7 @@ from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
-    help = 'Pull the configured Ollama model (llama3.2:3b)'
+    help = 'Pull the configured Ollama model (llama3.1:8b)'
 
     def handle(self, *args, **options):
         model = settings.OLLAMA_MODEL

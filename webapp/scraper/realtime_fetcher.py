@@ -21,29 +21,82 @@ STOP_WORDS = {
     've', 'veya', 'ile', 'bir', 'bu', 'şu', 'da', 'de', 'ki', 'için',
     'gibi', 'kadar', 'ama', 'fakat', 'ancak', 'çünkü', 'eğer', 'ise',
     'ne', 'nasıl', 'neden', 'nerede', 'hangi', 'hakkında', 'var', 'yok',
-    'mı', 'mi', 'mu', 'mü', 'olan', 'olan', 'olan', 'olarak', 'daha',
+    'mı', 'mi', 'mu', 'mü', 'olan', 'olarak', 'daha',
     'çok', 'en', 'her', 'hiç', 'bazı', 'tüm', 'bütün', 'bana', 'benim',
     'bilgi', 'ver', 'verir', 'verebilir', 'bilir', 'lütfen',
-    'bölüm', 'bölümü', 'program', 'programı', 'üniversite', 'üniversitesi',
+    'bölüm', 'bölümü', 'program', 'programı',
+    'üniversite', 'üniversitesi', 'üniversitede', 'üniversiteye',
+    'üniversiteden', 'üniversitesinde', 'üniversitenin', 'üniversitesinin',
+    'söyle', 'söyler', 'söyleyebilir', 'anlat', 'anlatır', 'listele',
+    'hepsi', 'hepsini', 'hepsinde', 'tümünü', 'tamamını',
+    'neler', 'nelerdir', 'kaçtane', 'kaçtanedir',
+    'acıbadem', 'acibadem',
     # English
     'the', 'is', 'are', 'was', 'were', 'what', 'how', 'where', 'when',
     'who', 'which', 'about', 'from', 'that', 'this', 'have', 'has',
     'not', 'can', 'will', 'would', 'could', 'should', 'tell', 'give',
-    'information', 'please', 'about',
-    'and', 'or', 'but', 'with', 'for', 'its', 'does', 'do',
+    'information', 'please', 'and', 'or', 'but', 'with', 'for', 'its',
+    'does', 'do', 'list', 'all',
 }
 
-
-def extract_keywords(text: str) -> list[str]:
-    """Extract meaningful keywords from a question."""
-    text = text.lower()
-    text = re.sub(r'[^\w\s]', ' ', text)
-    words = text.split()
-    return [w for w in words if w not in STOP_WORDS and len(w) > 2]
+# Turkish suffixes ordered longest-first for greedy stripping
+_TR_SUFFIXES = [
+    'lerin', 'ların', 'lerin', 'nüzün', 'nizin', 'nızın', 'nunun',
+    'lere', 'lara', 'leri', 'ları', 'lerde', 'larda', 'lerden', 'lardan',
+    'ler', 'lar',
+    'nden', 'ndan', 'nde', 'nda', 'nün', 'nun', 'nin', 'nın',
+    'den', 'dan', 'ten', 'tan', 'de', 'da', 'te', 'ta',
+    'nün', 'nun', 'nin', 'nın',
+    'ün', 'un', 'in', 'ın',
+    'ye', 'ya', 'e', 'a',
+    'yi', 'yı', 'yü', 'yu', 'i', 'ı', 'ü', 'u',
+    'dir', 'dır', 'dür', 'dur', 'tir', 'tır', 'tür', 'tur',
+]
 
 
 def normalize_text(text: str) -> str:
     return re.sub(r'\s+', ' ', text.lower()).strip()
+
+
+def stem_turkish(word: str) -> str:
+    """Strip common Turkish suffixes to get an approximate stem."""
+    if len(word) <= 4:
+        return word
+    for suffix in _TR_SUFFIXES:
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[:-len(suffix)]
+    return word
+
+
+def is_listing_question(text: str) -> bool:
+    """Detect questions that ask for a complete list (e.g. 'hangi fakülteler var')."""
+    words = set(normalize_text(text).split())
+    listing_phrases = {
+        'hangi', 'hepsi', 'hepsini', 'tüm', 'bütün', 'listele',
+        'neler', 'nelerdir', 'say', 'tamamı', 'tamamını',
+    }
+    return bool(words & listing_phrases)
+
+
+def extract_keywords(text: str) -> list[str]:
+    """Extract meaningful keywords from a question, including Turkish stems."""
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', ' ', text)
+    words = text.split()
+    keywords = []
+    seen = set()
+    for w in words:
+        if w in STOP_WORDS or len(w) <= 2:
+            continue
+        if w not in seen:
+            keywords.append(w)
+            seen.add(w)
+        # Also add the stemmed form if different and not a stop word
+        stem = stem_turkish(w)
+        if stem != w and stem not in STOP_WORDS and len(stem) > 2 and stem not in seen:
+            keywords.append(stem)
+            seen.add(stem)
+    return keywords
 
 
 def is_staff_question(text: str) -> bool:
@@ -135,6 +188,14 @@ def score_page_relevance(question: str, page, keywords: list[str]) -> int:
         score += 12
     if '/hakkinda' in url or '/akademik-kadro' in url or '/bolum-baskaninin-mesaji' in url:
         score += 4
+
+    # Boost faculty/department listing pages for listing questions
+    if any(kw in ('fakülte', 'fakulte', 'fakülteler') for kw in keywords):
+        if '/fakulte' in url or 'fakülte' in title:
+            score += 20
+        # Main listing pages that aggregate all faculties
+        if url.rstrip('/').endswith('/fakulteler') or url.rstrip('/').endswith('/akademik'):
+            score += 30
 
     return score
 
@@ -294,9 +355,11 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
     """
     context_parts = []
     sources = []
+    listing = is_listing_question(question)
 
     # Step 1: Bologna DB (academic programs, courses, curricula)
-    bologna_results = search_bologna(question)
+    bologna_max = 4 if listing else 2
+    bologna_results = search_bologna(question, max_results=bologna_max)
     for result in bologna_results:
         context_parts.append(
             f"=== {result['faculty']} - {result['program']} (Bologna) ===\n"
@@ -306,7 +369,8 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
             sources.append(result['url'])
 
     # Step 2: Pre-scraped ACU pages stored in ScrapedPage
-    scraped_results = search_scraped_pages(question, max_results=2)
+    scraped_max = 4 if listing else 2
+    scraped_results = search_scraped_pages(question, max_results=scraped_max)
     for result in scraped_results:
         if result['url'] not in sources:
             context_parts.append(
@@ -317,7 +381,8 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
     # Step 3: Real-time fallback if DB has no relevant data
     if not context_parts:
         logger.info("No DB results found, falling back to real-time fetch")
-        urls = find_relevant_urls(question, max_results=2)
+        rt_max = 3 if listing else 2
+        urls = find_relevant_urls(question, max_results=rt_max)
         for url in urls:
             if url in sources:
                 continue
