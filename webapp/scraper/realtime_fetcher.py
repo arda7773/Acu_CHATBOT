@@ -197,6 +197,29 @@ def score_page_relevance(question: str, page, keywords: list[str]) -> int:
         if url.rstrip('/').endswith('/fakulteler') or url.rstrip('/').endswith('/akademik'):
             score += 30
 
+    # For "which departments" listing questions, strongly boost faculty-level overview pages
+    # and demote individual deep department detail pages
+    listing_q = is_listing_question(question)
+    asks_for_bolum = any(kw in ('bölüm', 'bolum', 'bölümler', 'bolumler', 'program', 'programlar') for kw in keywords)
+    if listing_q and asks_for_bolum:
+        # Count meaningful URL path segments to identify overview vs sub-pages
+        # e.g. /akademik/lisans/tip-fakultesi/ → 3 segments (overview)
+        # vs   /akademik/lisans/tip-fakultesi/akademik-kadro → 4 segments (sub-page)
+        path_segments = len([s for s in page.url.split('/') if s]) - 2  # subtract scheme + domain
+        is_faculty_overview = (
+            '/lisans/' in url and
+            '/bolumler/' not in url and
+            path_segments <= 3
+        )
+        if is_faculty_overview:
+            score += 40
+        # Also boost the top-level lisans page
+        if url.rstrip('/').endswith('/lisans') or url.rstrip('/').endswith('/akademik/lisans'):
+            score += 50
+        # Demote individual deep department pages — they only describe one department
+        if '/bolumler/' in url and path_segments >= 4:
+            score -= 15
+
     return score
 
 
@@ -304,6 +327,8 @@ def search_scraped_pages(question: str, max_results: int = 3) -> list[dict]:
     if not keywords:
         return []
     asks_for_staff = is_staff_question(question)
+    listing_q = is_listing_question(question)
+    asks_for_bolum = any(kw in ('bölüm', 'bolum', 'bölümler', 'bolumler', 'program', 'programlar') for kw in keywords)
 
     query = Q()
     for kw in keywords:
@@ -311,6 +336,11 @@ def search_scraped_pages(question: str, max_results: int = 3) -> list[dict]:
         query |= Q(url__icontains=kw)
         query |= Q(text__icontains=kw)
         query |= Q(description__icontains=kw)
+
+    # For "which departments/programs" listing questions, also pull in faculty-level
+    # overview pages (they list all departments but may not contain the keyword "bölümler")
+    if listing_q and asks_for_bolum:
+        query |= Q(url__icontains='/lisans/', depth__lte=2)
 
     candidates = list(ScrapedPage.objects.filter(query))
     if not candidates:

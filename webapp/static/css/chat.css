@@ -195,32 +195,39 @@ body {
     margin-bottom: 4px;
 }
 
-.quick-btn {
+.history-btn {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 8px;
     background: none;
     border: none;
     color: var(--sidebar-text);
+    text-decoration: none;
     text-align: left;
-    padding: 9px 10px;
+    padding: 8px 10px;
     border-radius: var(--radius-sm);
     font-size: 13px;
     cursor: pointer;
     transition: background var(--transition), color var(--transition);
-    line-height: 1.45;
+    line-height: 1.4;
     width: 100%;
 }
 
-.quick-btn:hover {
+.history-btn:hover {
     background: var(--sidebar-hover);
     color: #f9fafb;
 }
 
-.quick-btn .q-icon {
-    font-size: 15px;
-    flex-shrink: 0;
-    margin-top: 1px;
+.history-btn.active {
+    background: var(--sidebar-active);
+    color: #f9fafb;
+}
+
+.history-title {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    min-width: 0;
 }
 
 /* ─── Sidebar Footer ─── */

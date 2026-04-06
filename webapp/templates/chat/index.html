@@ -40,46 +40,23 @@
                     Yeni Sohbet
                 </a>
 
+                {% if recent_sessions %}
                 <div class="sidebar-section">
-                    <div class="sidebar-section-title">Örnek Sorular</div>
-
-                    <button class="quick-btn" data-q="Bilgisayar Mühendisliği bölümü hakkında bilgi verir misin?">
-                        <span class="q-icon">💻</span>
-                        Bilgisayar Mühendisliği
-                    </button>
-                    <button class="quick-btn" data-q="Tıp Fakültesi akademik kadrosu kimlerden oluşuyor?">
-                        <span class="q-icon">🏥</span>
-                        Tıp Fakültesi kadrosu
-                    </button>
-                    <button class="quick-btn" data-q="Üniversitenin öğrenci kabul koşulları nelerdir?">
-                        <span class="q-icon">📋</span>
-                        Kabul koşulları
-                    </button>
-                    <button class="quick-btn" data-q="Kampüs imkânları ve tesisler hakkında bilgi verir misin?">
-                        <span class="q-icon">🏛️</span>
-                        Kampüs imkânları
-                    </button>
-                    <button class="quick-btn" data-q="Üniversiteyle nasıl iletişime geçebilirim?">
-                        <span class="q-icon">📞</span>
-                        İletişim bilgileri
-                    </button>
-                    <button class="quick-btn" data-q="Hangi yüksek lisans programları mevcut?">
-                        <span class="q-icon">🎓</span>
-                        Yüksek lisans programları
-                    </button>
-                    <button class="quick-btn" data-q="Burslar ve mali yardım imkânları nelerdir?">
-                        <span class="q-icon">💰</span>
-                        Burs imkânları
-                    </button>
-                    <button class="quick-btn" data-q="Uluslararası öğrenci başvuru süreci nasıl işliyor?">
-                        <span class="q-icon">🌍</span>
-                        Uluslararası başvuru
-                    </button>
+                    <div class="sidebar-section-title">Geçmiş Sohbetler</div>
+                    {% for s in recent_sessions %}
+                    <a href="{% url 'chat_session' s.id %}" class="history-btn {% if s.active %}active{% endif %}">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5">
+                            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                        </svg>
+                        <span class="history-title">{{ s.title }}</span>
+                    </a>
+                    {% endfor %}
                 </div>
+                {% endif %}
             </div>
 
             <div class="sidebar-footer">
-                <div class="sidebar-footer-badge">llama3.2:3b · Yerel Model</div>
+                <div class="sidebar-footer-badge">{{ ollama_model }} · Yerel Model</div>
             </div>
         </aside>
 
@@ -107,7 +84,7 @@
                             <path d="M2 17l10 5 10-5"/>
                             <path d="M2 12l10 5 10-5"/>
                         </svg>
-                        llama3.2:3b · Yerel Model
+                        {{ ollama_model }} · Yerel Model
                     </div>
                 </div>
             </div>
@@ -317,7 +294,7 @@
             });
         }
 
-        document.querySelectorAll('.quick-btn, .welcome-chip').forEach(bindQuickBtn);
+        document.querySelectorAll('.welcome-chip').forEach(bindQuickBtn);
 
         /* ─── Keyboard shortcut ─── */
         questionInput.addEventListener('keydown', function (e) {
