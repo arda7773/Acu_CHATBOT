@@ -5,13 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ACU AI Asistan | Acıbadem Üniversitesi</title>
     {% load static %}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{% static 'css/chat.css' %}">
 </head>
 <body>
+
+    <!-- Mobile sidebar overlay -->
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+    <!-- Toast notification -->
+    <div class="toast" id="toast"></div>
+
     <div class="app-wrapper">
 
-        <!-- Sidebar -->
-        <aside class="sidebar">
+        <!-- ─── Sidebar ─── -->
+        <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <div class="logo-area">
                     <div class="logo-icon">ACU</div>
@@ -21,72 +31,156 @@
                     </div>
                 </div>
             </div>
+
             <div class="sidebar-body">
-                <a href="{% url 'new_session' %}" class="btn-new-chat">+ Yeni Sohbet</a>
-                <div class="sidebar-section-title">Örnek Sorular</div>
-                <div class="quick-questions">
-                    <button class="quick-btn" data-q="Bilgisayar Mühendisliği bölümü hakkında bilgi verir misin?">Bilgisayar Mühendisliği</button>
-                    <button class="quick-btn" data-q="Tıp Fakültesi akademik kadrosu kimlerden oluşuyor?">Tıp Fakültesi kadrosu</button>
-                    <button class="quick-btn" data-q="Üniversitenin öğrenci kabul koşulları nelerdir?">Kabul koşulları</button>
-                    <button class="quick-btn" data-q="Kampüs imkânları ve tesisler hakkında bilgi verir misin?">Kampüs imkânları</button>
-                    <button class="quick-btn" data-q="Üniversiteyle nasıl iletişime geçebilirim?">İletişim bilgileri</button>
-                    <button class="quick-btn" data-q="Hangi yüksek lisans programları mevcut?">Yüksek lisans programları</button>
+                <a href="{% url 'new_session' %}" class="btn-new-chat">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    Yeni Sohbet
+                </a>
+
+                <div class="sidebar-section">
+                    <div class="sidebar-section-title">Örnek Sorular</div>
+
+                    <button class="quick-btn" data-q="Bilgisayar Mühendisliği bölümü hakkında bilgi verir misin?">
+                        <span class="q-icon">💻</span>
+                        Bilgisayar Mühendisliği
+                    </button>
+                    <button class="quick-btn" data-q="Tıp Fakültesi akademik kadrosu kimlerden oluşuyor?">
+                        <span class="q-icon">🏥</span>
+                        Tıp Fakültesi kadrosu
+                    </button>
+                    <button class="quick-btn" data-q="Üniversitenin öğrenci kabul koşulları nelerdir?">
+                        <span class="q-icon">📋</span>
+                        Kabul koşulları
+                    </button>
+                    <button class="quick-btn" data-q="Kampüs imkânları ve tesisler hakkında bilgi verir misin?">
+                        <span class="q-icon">🏛️</span>
+                        Kampüs imkânları
+                    </button>
+                    <button class="quick-btn" data-q="Üniversiteyle nasıl iletişime geçebilirim?">
+                        <span class="q-icon">📞</span>
+                        İletişim bilgileri
+                    </button>
+                    <button class="quick-btn" data-q="Hangi yüksek lisans programları mevcut?">
+                        <span class="q-icon">🎓</span>
+                        Yüksek lisans programları
+                    </button>
+                    <button class="quick-btn" data-q="Burslar ve mali yardım imkânları nelerdir?">
+                        <span class="q-icon">💰</span>
+                        Burs imkânları
+                    </button>
+                    <button class="quick-btn" data-q="Uluslararası öğrenci başvuru süreci nasıl işliyor?">
+                        <span class="q-icon">🌍</span>
+                        Uluslararası başvuru
+                    </button>
                 </div>
             </div>
+
             <div class="sidebar-footer">
-                <span>CSE 322 – Cloud Computing</span>
+                <div class="sidebar-footer-badge">llama3.2:3b · Yerel Model</div>
             </div>
         </aside>
 
-        <!-- Main Chat Area -->
+        <!-- ─── Main Chat ─── -->
         <main class="chat-main">
+            <!-- Top bar -->
             <div class="chat-topbar">
-                <div class="topbar-title">
-                    <span class="status-dot" id="status-dot"></span>
-                    <span id="status-text">Hazır</span>
+                <div class="topbar-left">
+                    <button class="hamburger-btn" id="hamburger-btn" aria-label="Menüyü aç">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                            <line x1="3" y1="6" x2="21" y2="6"/>
+                            <line x1="3" y1="12" x2="21" y2="12"/>
+                            <line x1="3" y1="18" x2="21" y2="18"/>
+                        </svg>
+                    </button>
+                    <div class="topbar-status">
+                        <span class="status-dot" id="status-dot"></span>
+                        <span id="status-text">Hazır</span>
+                    </div>
                 </div>
-                <div class="topbar-model">llama3.2:3b · Yerel Model</div>
+                <div class="topbar-right">
+                    <div class="model-badge">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                            <path d="M2 17l10 5 10-5"/>
+                            <path d="M2 12l10 5 10-5"/>
+                        </svg>
+                        llama3.2:3b · Yerel Model
+                    </div>
+                </div>
             </div>
 
             <!-- Messages -->
             <div class="messages-area" id="messages-area">
                 {% if not messages %}
-                <div class="welcome-card">
-                    <div class="welcome-icon">🎓</div>
-                    <h2>Acıbadem Üniversitesi AI Asistanı</h2>
+                <div class="welcome-card" id="welcome-card">
+                    <div class="welcome-icon-wrap">🎓</div>
+                    <h2>Acıbadem Üniversitesi<br>AI Asistanı</h2>
                     <p>Üniversite hakkında merak ettiğiniz her şeyi sorabilirsiniz.<br>
                     Akademik programlar, bölümler, kabul koşulları, kampüs ve daha fazlası.</p>
+                    <div class="welcome-chips">
+                        <button class="welcome-chip" data-q="Hangi bölümler mevcut?">Bölümler</button>
+                        <button class="welcome-chip" data-q="Kabul koşulları nelerdir?">Kabul Koşulları</button>
+                        <button class="welcome-chip" data-q="Kampüs hakkında bilgi ver">Kampüs</button>
+                        <button class="welcome-chip" data-q="Burs imkânları neler?">Burslar</button>
+                    </div>
                 </div>
                 {% endif %}
 
                 {% for msg in messages %}
+                <!-- User message -->
                 <div class="message user-message">
                     <div class="message-avatar user-avatar">S</div>
                     <div class="message-bubble user-bubble">
                         <div class="message-text">{{ msg.question }}</div>
-                        <div class="message-time">{{ msg.created_at|date:"H:i" }}</div>
+                        <div class="message-footer">
+                            <span class="message-time">{{ msg.created_at|date:"H:i" }}</span>
+                            <button class="copy-btn" title="Kopyala" onclick="copyText(this, '{{ msg.question|escapejs }}')">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                 </div>
+                <!-- Bot message -->
                 <div class="message bot-message">
                     <div class="message-avatar bot-avatar">AI</div>
                     <div class="message-bubble bot-bubble">
                         <div class="message-text">{{ msg.answer }}</div>
                         {% if msg.sources %}
                         <div class="sources-area">
-                            <span class="sources-label">Kaynaklar:</span>
+                            <span class="sources-label">Kaynaklar</span>
                             {% for src in msg.sources %}
-                            <a href="{{ src }}" target="_blank" class="source-link">{{ src|truncatechars:60 }}</a>
+                            <a href="{{ src }}" target="_blank" rel="noopener noreferrer" class="source-link">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
+                                    <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                                </svg>
+                                {{ src|truncatechars:70 }}
+                            </a>
                             {% endfor %}
                         </div>
                         {% endif %}
-                        <div class="message-time">{{ msg.created_at|date:"H:i" }}</div>
+                        <div class="message-footer">
+                            <span class="message-time">{{ msg.created_at|date:"H:i" }}</span>
+                            <button class="copy-btn" title="Kopyala" onclick="copyText(this, '{{ msg.answer|escapejs }}')">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                 </div>
                 {% endfor %}
             </div>
 
             <!-- Typing indicator -->
-            <div class="typing-indicator" id="typing-indicator" style="display:none;">
+            <div class="typing-indicator" id="typing-indicator">
                 <div class="message bot-message">
                     <div class="message-avatar bot-avatar">AI</div>
                     <div class="message-bubble bot-bubble">
@@ -97,60 +191,135 @@
                 </div>
             </div>
 
+            <!-- Scroll-to-bottom -->
+            <button class="scroll-btn" id="scroll-btn" title="Aşağı kaydır" aria-label="Aşağı kaydır">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 12 15 18 9"/>
+                </svg>
+            </button>
+
             <!-- Input Area -->
             <div class="input-area">
                 <div class="input-container">
                     <textarea
                         id="question-input"
-                        placeholder="Acıbadem Üniversitesi hakkında sorunuzu yazın..."
+                        placeholder="Acıbadem Üniversitesi hakkında bir şey sorun..."
                         rows="1"
                         maxlength="1000"
+                        aria-label="Soru girin"
                     ></textarea>
-                    <button id="send-btn" title="Gönder">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="22" y1="2" x2="11" y2="13"></line>
-                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                        </svg>
-                    </button>
+                    <div class="input-actions">
+                        <button id="send-btn" title="Gönder (Enter)" aria-label="Gönder">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="22" y1="2" x2="11" y2="13"/>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
-                <div class="input-hint">Enter ile gönder · Shift+Enter ile yeni satır</div>
+                <div class="input-meta">
+                    <span class="input-hint">Enter ile gönder &nbsp;·&nbsp; Shift+Enter ile yeni satır</span>
+                    <span class="char-counter" id="char-counter">0 / 1000</span>
+                </div>
             </div>
         </main>
     </div>
 
     <script>
+        /* ─── Constants ─── */
         const SESSION_ID = "{{ session_id }}";
-        const API_URL = "{% url 'chat_api' %}";
+        const API_URL    = "{% url 'chat_api' %}";
 
-        const messagesArea = document.getElementById('messages-area');
-        const questionInput = document.getElementById('question-input');
-        const sendBtn = document.getElementById('send-btn');
+        /* ─── Elements ─── */
+        const messagesArea    = document.getElementById('messages-area');
+        const questionInput   = document.getElementById('question-input');
+        const sendBtn         = document.getElementById('send-btn');
         const typingIndicator = document.getElementById('typing-indicator');
-        const statusDot = document.getElementById('status-dot');
-        const statusText = document.getElementById('status-text');
+        const statusDot       = document.getElementById('status-dot');
+        const statusText      = document.getElementById('status-text');
+        const charCounter     = document.getElementById('char-counter');
+        const scrollBtn       = document.getElementById('scroll-btn');
+        const sidebar         = document.getElementById('sidebar');
+        const overlay         = document.getElementById('sidebar-overlay');
+        const hamburgerBtn    = document.getElementById('hamburger-btn');
+        const toast           = document.getElementById('toast');
 
-        // Auto-scroll to bottom
-        function scrollToBottom() {
-            messagesArea.scrollTop = messagesArea.scrollHeight;
+        /* ─── Scroll helpers ─── */
+        function isNearBottom() {
+            return messagesArea.scrollHeight - messagesArea.scrollTop - messagesArea.clientHeight < 80;
         }
-        scrollToBottom();
 
-        // Auto-resize textarea
+        function scrollToBottom(smooth = true) {
+            messagesArea.scrollTo({ top: messagesArea.scrollHeight, behavior: smooth ? 'smooth' : 'instant' });
+        }
+
+        messagesArea.addEventListener('scroll', () => {
+            scrollBtn.classList.toggle('visible', !isNearBottom());
+        });
+
+        scrollBtn.addEventListener('click', () => scrollToBottom());
+
+        /* ─── Sidebar toggle (mobile) ─── */
+        function openSidebar() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+        }
+        function closeSidebar() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+        }
+
+        hamburgerBtn.addEventListener('click', () => {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+
+        overlay.addEventListener('click', closeSidebar);
+
+        /* ─── Toast ─── */
+        let toastTimer;
+        function showToast(msg, duration = 3000) {
+            toast.textContent = msg;
+            toast.classList.add('show');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => toast.classList.remove('show'), duration);
+        }
+
+        /* ─── Copy helper ─── */
+        function copyText(btn, text) {
+            navigator.clipboard.writeText(text).then(() => {
+                btn.classList.add('copied');
+                btn.title = 'Kopyalandı!';
+                setTimeout(() => {
+                    btn.classList.remove('copied');
+                    btn.title = 'Kopyala';
+                }, 2000);
+                showToast('Kopyalandı!', 1800);
+            }).catch(() => showToast('Kopyalanamadı.'));
+        }
+
+        /* ─── Auto-resize textarea ─── */
         questionInput.addEventListener('input', function () {
             this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+            this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+            const len = this.value.length;
+            charCounter.textContent = `${len} / 1000`;
+            charCounter.className = 'char-counter' + (len > 900 ? ' limit' : len > 750 ? ' warn' : '');
         });
 
-        // Quick question buttons
-        document.querySelectorAll('.quick-btn').forEach(btn => {
+        /* ─── Quick question buttons ─── */
+        function bindQuickBtn(btn) {
             btn.addEventListener('click', () => {
                 questionInput.value = btn.dataset.q;
+                questionInput.dispatchEvent(new Event('input'));
                 questionInput.focus();
+                closeSidebar();
                 sendMessage();
             });
-        });
+        }
 
-        // Send on Enter (Shift+Enter = new line)
+        document.querySelectorAll('.quick-btn, .welcome-chip').forEach(bindQuickBtn);
+
+        /* ─── Keyboard shortcut ─── */
         questionInput.addEventListener('keydown', function (e) {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -160,12 +329,20 @@
 
         sendBtn.addEventListener('click', sendMessage);
 
+        /* ─── Status ─── */
         function setStatus(state) {
             if (state === 'loading') {
                 statusDot.className = 'status-dot loading';
                 statusText.textContent = 'Yanıt alınıyor...';
                 sendBtn.disabled = true;
                 questionInput.disabled = true;
+            } else if (state === 'error') {
+                statusDot.className = 'status-dot error';
+                statusText.textContent = 'Hata oluştu';
+                sendBtn.disabled = false;
+                questionInput.disabled = false;
+                questionInput.focus();
+                setTimeout(() => setStatus('ready'), 3000);
             } else {
                 statusDot.className = 'status-dot';
                 statusText.textContent = 'Hazır';
@@ -175,12 +352,19 @@
             }
         }
 
+        /* ─── Now string ─── */
+        function nowStr() {
+            const d = new Date();
+            return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+        }
+
+        /* ─── Append message ─── */
         function appendMessage(role, text, sources = []) {
-            // Remove welcome card if present
             const welcome = document.querySelector('.welcome-card');
             if (welcome) welcome.remove();
 
             const isUser = role === 'user';
+
             const wrapper = document.createElement('div');
             wrapper.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
 
@@ -201,66 +385,89 @@
                 srcArea.className = 'sources-area';
                 const label = document.createElement('span');
                 label.className = 'sources-label';
-                label.textContent = 'Kaynaklar: ';
+                label.textContent = 'Kaynaklar';
                 srcArea.appendChild(label);
                 sources.forEach(src => {
                     const a = document.createElement('a');
                     a.href = src;
                     a.target = '_blank';
+                    a.rel = 'noopener noreferrer';
                     a.className = 'source-link';
-                    a.textContent = src.length > 60 ? src.substring(0, 60) + '...' : src;
+                    a.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
+                    a.appendChild(document.createTextNode(src.length > 70 ? src.substring(0, 70) + '…' : src));
                     srcArea.appendChild(a);
                 });
                 bubble.appendChild(srcArea);
             }
 
-            const time = document.createElement('div');
-            time.className = 'message-time';
-            const now = new Date();
-            time.textContent = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
-            bubble.appendChild(time);
+            const footer = document.createElement('div');
+            footer.className = 'message-footer';
 
+            const time = document.createElement('span');
+            time.className = 'message-time';
+            time.textContent = nowStr();
+            footer.appendChild(time);
+
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'copy-btn';
+            copyBtn.title = 'Kopyala';
+            copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>`;
+            copyBtn.addEventListener('click', () => copyText(copyBtn, text));
+            footer.appendChild(copyBtn);
+
+            bubble.appendChild(footer);
             wrapper.appendChild(avatar);
             wrapper.appendChild(bubble);
             messagesArea.appendChild(wrapper);
-            scrollToBottom();
+
+            if (isNearBottom()) scrollToBottom();
         }
 
+        /* ─── Send message ─── */
         async function sendMessage() {
             const question = questionInput.value.trim();
-            if (!question) return;
+            if (!question || sendBtn.disabled) return;
 
             questionInput.value = '';
             questionInput.style.height = 'auto';
+            charCounter.textContent = '0 / 1000';
+            charCounter.className = 'char-counter';
 
             appendMessage('user', question);
             setStatus('loading');
-            typingIndicator.style.display = 'flex';
-            scrollToBottom();
+            typingIndicator.classList.add('visible');
+            if (isNearBottom()) scrollToBottom();
 
             try {
                 const response = await fetch(API_URL, {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({question, session_id: SESSION_ID}),
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question, session_id: SESSION_ID }),
                 });
 
+                typingIndicator.classList.remove('visible');
+
                 const data = await response.json();
-                typingIndicator.style.display = 'none';
 
                 if (response.ok) {
                     appendMessage('bot', data.answer, data.sources || []);
+                    setStatus('ready');
                 } else {
                     appendMessage('bot', data.error || 'Bir hata oluştu. Lütfen tekrar deneyin.');
+                    setStatus('error');
                 }
             } catch (err) {
-                typingIndicator.style.display = 'none';
+                typingIndicator.classList.remove('visible');
                 appendMessage('bot', 'Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.');
+                setStatus('error');
             }
 
-            setStatus('ready');
             scrollToBottom();
         }
+
+        /* ─── Init ─── */
+        scrollToBottom(false);
+        questionInput.focus();
     </script>
 </body>
 </html>
