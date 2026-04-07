@@ -1,207 +1,238 @@
 import time
 import logging
-from urllib.parse import urljoin
-
-from django.conf import settings
+import requests
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from urllib.parse import urljoin, urlparse, parse_qs
 
 logger = logging.getLogger(__name__)
 
-BOLOGNA_INDEX_URL = 'https://obs.acibadem.edu.tr/oibs/bologna/index.aspx?lang=tr'
+BASE_URL = 'https://obs.acibadem.edu.tr/oibs/bologna/'
+HEADERS = {
+    'User-Agent': 'ACU-ChatBot/1.0 (Educational Project - CSE322)',
+    'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
+    'Referer': 'https://obs.acibadem.edu.tr/oibs/bologna/index.aspx?lang=tr',
+}
+
+PROGRAM_TYPES = {
+    'lis': 'Lisans',
+    'myo': 'Ön Lisans',
+    'yls': 'Yüksek Lisans',
+    'dok': 'Doktora',
+}
+
+# General info pages: pageId -> (title, faculty_label)
+GENERAL_PAGES = {
+    100: ('Yönetim', 'Kurumsal Bilgiler'),
+    101: ('Üniversite Hakkında', 'Kurumsal Bilgiler'),
+    102: ('Bologna Komisyonu', 'Kurumsal Bilgiler'),
+    103: ('İletişim ve Ulaşım', 'Kurumsal Bilgiler'),
+    104: ('AKTS Kataloğu', 'Kurumsal Bilgiler'),
+    300: ('Şehir Hakkında - İstanbul', 'Öğrenci Bilgileri'),
+    301: ('Kampüs', 'Öğrenci Bilgileri'),
+    302: ('Yemek Hizmetleri', 'Öğrenci Bilgileri'),
+    303: ('Sağlık Hizmetleri', 'Öğrenci Bilgileri'),
+    304: ('Spor ve Sosyal Yaşam', 'Öğrenci Bilgileri'),
+    305: ('Öğrenci Kulüpleri', 'Öğrenci Bilgileri'),
+    309: ('Konaklama', 'Öğrenci Bilgileri'),
+    311: ('Engelli Öğrenci Hizmetleri', 'Öğrenci Bilgileri'),
+    400: ('Bologna Süreci', 'Bologna Bilgileri'),
+}
 
 
-def get_driver() -> webdriver.Remote:
-    """Create a Selenium Remote WebDriver connected to the selenium container."""
-    options = webdriver.ChromeOptions()
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument('--lang=tr')
-
-    driver = webdriver.Remote(
-        command_executor=settings.SELENIUM_URL,
-        options=options,
-    )
-    driver.implicitly_wait(10)
-    return driver
+def fetch_html(url: str) -> BeautifulSoup | None:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=20)
+        r.raise_for_status()
+        return BeautifulSoup(r.content, 'html.parser')
+    except requests.RequestException as e:
+        logger.warning(f"Fetch failed: {url} — {e}")
+        return None
 
 
-def get_all_program_links(driver) -> list[dict]:
+def clean_text(soup: BeautifulSoup) -> str:
+    text = soup.get_text(separator='\n', strip=True)
+    lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) > 2]
+    return '\n'.join(lines)
+
+
+def get_all_program_links() -> list[dict]:
     """
-    Open the Bologna index page and collect all program links.
-    Returns a list of dicts: {name, url, faculty}
+    Fetch all programs from all degree types via unitSelection.aspx.
+    Returns list of dicts with name, url, faculty, program_type, curSunit, curUnit.
     """
     programs = []
-    logger.info(f"Opening Bologna index: {BOLOGNA_INDEX_URL}")
-    driver.get(BOLOGNA_INDEX_URL)
-    time.sleep(5)  # Allow JS to render
 
-    try:
-        wait = WebDriverWait(driver, 30)
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, 'a')))
-    except Exception:
-        logger.warning("Timed out waiting for Bologna index to load")
-
-    seen_hrefs = set()
-    candidate_frames = [None]
-    candidate_frames.extend(driver.find_elements(By.TAG_NAME, 'iframe'))
-    logger.info(f"Checking Bologna DOM across {len(candidate_frames)} frame context(s)")
-
-    selectors = [
-        'a[href*="showPac"]',
-        'a[href*="showProgram"]',
-        'a[href*="curOp=show"]',
-        'a[href*="bologna"]',
-        'a[href*="curSunit"]',
-        'a[href*="ders"]',
-        'a[href*="program"]',
-        '[onclick*="showPac"]',
-        '[onclick*="showProgram"]',
-        '[onclick*="curOp=show"]',
-    ]
-
-    for frame in candidate_frames:
-        try:
-            driver.switch_to.default_content()
-            if frame is not None:
-                driver.switch_to.frame(frame)
-                time.sleep(1)
-        except Exception as e:
-            logger.warning(f"Could not switch frame while collecting Bologna links: {e}")
+    for prog_type, type_name in PROGRAM_TYPES.items():
+        url = BASE_URL + f'unitSelection.aspx?type={prog_type}&lang=tr'
+        soup = fetch_html(url)
+        if not soup:
+            logger.warning(f"Could not fetch {type_name} program list")
             continue
 
-        for selector in selectors:
-            for link in driver.find_elements(By.CSS_SELECTOR, selector):
-                href = link.get_attribute('href') or ''
-                onclick = link.get_attribute('onclick') or ''
-                text = link.text.strip()
-                candidate_url = href.strip()
+        current_faculty = ''
+        type_count = 0
 
-                if not candidate_url and 'location' in onclick:
-                    parts = onclick.split("'")
-                    candidate_url = next((p for p in parts if 'show' in p or 'program' in p), '')
+        for a in soup.find_all('a', href=True):
+            href = a['href'].strip()
+            text = a.text.strip()
 
-                if not candidate_url or not text:
-                    continue
+            if not text:
+                continue
 
-                if not candidate_url.startswith('http'):
-                    candidate_url = urljoin('https://obs.acibadem.edu.tr/', candidate_url)
+            # Faculty headers link to in-page anchors like #x12, #x01, etc.
+            if href.startswith('#x') and len(href) <= 5:
+                current_faculty = text
+                continue
 
-                if candidate_url not in seen_hrefs:
-                    seen_hrefs.add(candidate_url)
-                    programs.append({'name': text, 'url': candidate_url, 'faculty': ''})
+            # Program links — these have showPac + curSunit
+            if 'showPac' in href and 'curSunit' in href:
+                full_url = urljoin(BASE_URL, href)
+                parsed = urlparse(full_url)
+                params = parse_qs(parsed.query)
+                cur_sunit = params.get('curSunit', [''])[0]
+                cur_unit = params.get('curUnit', [''])[0]
 
-        if not programs:
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            for link in soup.select('a[href], [onclick]'):
-                href = (link.get('href') or '').strip()
-                onclick = (link.get('onclick') or '').strip()
-                text = link.get_text(' ', strip=True)
-                candidate_url = href or onclick
-                if not text:
-                    continue
-                if not any(token in candidate_url.lower() for token in ['show', 'program', 'bologna', 'curop']):
-                    continue
-                if not candidate_url.startswith('http'):
-                    candidate_url = urljoin('https://obs.acibadem.edu.tr/', candidate_url)
-                if candidate_url not in seen_hrefs:
-                    seen_hrefs.add(candidate_url)
-                    programs.append({'name': text, 'url': candidate_url, 'faculty': ''})
+                if cur_sunit:
+                    programs.append({
+                        'name': text,
+                        'url': full_url,
+                        'faculty': current_faculty,
+                        'program_type': type_name,
+                        'curSunit': cur_sunit,
+                        'curUnit': cur_unit,
+                    })
+                    type_count += 1
 
-    try:
-        driver.switch_to.default_content()
-    except Exception:
-        pass
+        logger.info(f"Found {type_count} {type_name} programs")
 
-    logger.info(f"Found {len(programs)} program links")
     return programs
 
 
-def extract_faculty_name(content: str) -> str:
+def scrape_program_content(cur_sunit: str) -> str:
     """
-    Attempt to extract faculty name from the first lines of scraped content.
-    Bologna pages typically list the faculty/school near the top.
+    Scrape all available content for a program:
+    - progAbout.aspx: program details (mission, description, outcomes)
+    - progCourses.aspx: full course/curriculum list
+    No character limit — store everything for accurate Q&A.
     """
-    for line in content.split('\n')[:30]:
-        line = line.strip()
-        lower = line.lower()
-        if any(kw in lower for kw in ['fakülte', 'faculty', 'enstitü', 'institute',
-                                       'yüksekokul', 'school', 'meslek']):
-            return line[:300]
-    return 'Acıbadem Üniversitesi'
+    parts = []
+
+    # Program info page
+    soup = fetch_html(BASE_URL + f'progAbout.aspx?lang=tr&curSunit={cur_sunit}')
+    if soup:
+        text = clean_text(soup)
+        if text:
+            parts.append(text)
+
+    # Full course/curriculum list
+    soup = fetch_html(BASE_URL + f'progCourses.aspx?lang=tr&curSunit={cur_sunit}')
+    if soup:
+        text = clean_text(soup)
+        if len(text) > 100:
+            parts.append('--- DERS PLANI ---\n' + text)
+
+    return '\n\n'.join(parts)
 
 
-def scrape_program_page(driver, url: str) -> str:
-    """Navigate to a program page and extract its full text content."""
-    try:
-        driver.get(url)
-        time.sleep(2)
+def scrape_general_pages():
+    """
+    Scrape general university info pages (campus, food, sports, contact, etc.)
+    and save them as BolognaProgram entries.
+    """
+    from scraper.models import BolognaProgram
 
-        wait = WebDriverWait(driver, 15)
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
+    created = 0
+    updated = 0
 
-        body = driver.find_element(By.TAG_NAME, 'body')
-        raw_text = body.text
+    for page_id, (title, category) in GENERAL_PAGES.items():
+        url = BASE_URL + f'dynConPage.aspx?curPageId={page_id}&lang=tr'
+        soup = fetch_html(url)
+        if not soup:
+            continue
 
-        lines = [l.strip() for l in raw_text.split('\n') if l.strip() and len(l.strip()) > 2]
-        return '\n'.join(lines)[:6000]
+        content = clean_text(soup)
+        if len(content) < 50:
+            logger.warning(f"  Empty general page: {title} (id={page_id})")
+            continue
 
-    except Exception as e:
-        logger.error(f"Failed to scrape {url}: {e}")
-        return ''
+        _, is_new = BolognaProgram.objects.update_or_create(
+            url=url,
+            defaults={
+                'faculty': category,
+                'department': title,
+                'program_name': title,
+                'content': content,
+            }
+        )
+        logger.info(f"  General page saved: {title} ({len(content)} chars)")
+        if is_new:
+            created += 1
+        else:
+            updated += 1
+
+        time.sleep(1)
+
+    logger.info(f"General pages: {created} new, {updated} updated")
 
 
 def scrape_all_bologna():
     """
-    Main entry point for Bologna scraping.
-    Discovers all program pages and saves them to BolognaProgram model.
+    Main entry point. Uses requests+BeautifulSoup — no Selenium needed.
+    Scrapes:
+      1. All academic programs (progAbout + progCourses per program)
+      2. All general university info pages (campus, food, sports, contact, etc.)
     """
     from scraper.models import BolognaProgram
 
-    logger.info("Bologna scraper starting...")
-    driver = None
+    logger.info("Bologna scraper starting (requests-based, no Selenium)...")
 
-    try:
-        driver = get_driver()
-        programs = get_all_program_links(driver)
+    # --- Step 1: General info pages ---
+    logger.info("Scraping general university info pages...")
+    scrape_general_pages()
 
-        if not programs:
-            logger.warning("No program links found — check Bologna index page structure")
-            return
+    # --- Step 2: Academic programs ---
+    programs = get_all_program_links()
+    total = len(programs)
+    logger.info(f"Total academic programs to scrape: {total}")
 
-        for i, program in enumerate(programs, start=1):
-            url = program['url']
-            name = program['name']
-            logger.info(f"[{i}/{len(programs)}] Scraping: {name}")
+    if not programs:
+        logger.warning("No programs found — check unitSelection.aspx URLs")
+        return
 
-            content = scrape_program_page(driver, url)
-            if not content:
-                logger.warning(f"No content extracted for {name}, skipping")
-                continue
+    created = 0
+    updated = 0
 
-            faculty = extract_faculty_name(content)
+    for i, program in enumerate(programs, start=1):
+        name = program['name']
+        url = program['url']
+        faculty = program['faculty']
+        cur_sunit = program['curSunit']
+        prog_type = program['program_type']
 
-            BolognaProgram.objects.update_or_create(
-                url=url,
-                defaults={
-                    'faculty': faculty,
-                    'department': name,
-                    'program_name': name,
-                    'content': content,
-                }
-            )
-            logger.info(f"Saved: {name} ({faculty})")
-            time.sleep(2)  # Respectful delay between requests
+        logger.info(f"[{i}/{total}] {prog_type} | {faculty} | {name}")
 
-        logger.info(f"Bologna scraping complete. {len(programs)} programs processed.")
+        content = scrape_program_content(cur_sunit)
 
-    except Exception as e:
-        logger.error(f"Bologna scraper encountered a fatal error: {e}", exc_info=True)
-    finally:
-        if driver:
-            driver.quit()
+        if not content or len(content) < 50:
+            logger.warning(f"  No content, skipping: {name}")
+            continue
+
+        _, is_new = BolognaProgram.objects.update_or_create(
+            url=url,
+            defaults={
+                'faculty': faculty[:300],
+                'department': name[:300],
+                'program_name': f"{prog_type} - {name}"[:300],
+                'content': content,
+            }
+        )
+
+        if is_new:
+            created += 1
+        else:
+            updated += 1
+
+        time.sleep(1.5)  # Responsible delay between requests
+
+    logger.info(f"Academic programs done. {created} new, {updated} updated.")
+    logger.info(f"Total Bologna DB entries: {BolognaProgram.objects.count()}")

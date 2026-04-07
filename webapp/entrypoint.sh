@@ -22,13 +22,13 @@ until curl -s http://ollama:11434/api/tags > /dev/null 2>&1; do
 done
 echo "Ollama is ready!"
 
-echo "[5/5] Pulling llama3.2:3b model (background)..."
+echo "[5/5] Pulling ${OLLAMA_MODEL:-llama3.1:8b} model (background)..."
 python manage.py pull_model &
 
 echo "=== Starting Gunicorn on port 8000 ==="
 exec gunicorn config.wsgi:application \
   --bind 0.0.0.0:8000 \
   --workers 2 \
-  --timeout 120 \
+  --timeout 300 \
   --access-logfile - \
   --error-logfile -

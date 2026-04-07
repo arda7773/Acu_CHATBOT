@@ -117,7 +117,7 @@ ZORUNLU KURALLAR:
         response = requests.post(
             f'{settings.OLLAMA_URL}/api/chat',
             json=payload,
-            timeout=120,
+            timeout=240,
         )
         response.raise_for_status()
         data = response.json()
