@@ -25,8 +25,8 @@ STOP_WORDS = {
     'çok', 'en', 'her', 'hiç', 'bazı', 'tüm', 'bütün', 'bana', 'benim',
     'bilgi', 'ver', 'verir', 'verebilir', 'bilir', 'lütfen',
     'bölüm', 'bölümü', 'program', 'programı',
-    'üniversite', 'üniversitesi', 'üniversitede', 'üniversiteye',
-    'üniversiteden', 'üniversitesinde', 'üniversitenin', 'üniversitesinin',
+    'üniversiteye', 'üniversiteden', 'üniversitesinde',
+    'üniversitenin', 'üniversitesinin',
     'söyle', 'söyler', 'söyleyebilir', 'anlat', 'anlatır', 'listele',
     'hepsi', 'hepsini', 'hepsinde', 'tümünü', 'tamamını',
     'neler', 'nelerdir', 'kaçtane', 'kaçtanedir',
@@ -292,6 +292,39 @@ def fetch_page_text(url: str, max_chars: int = 3000) -> str:
         return ''
 
 
+def score_bologna_relevance(program, keywords: list[str]) -> int:
+    """Score a BolognaProgram by how closely it matches the keywords."""
+    score = 0
+    name = normalize_text(program.program_name or '')
+    dept = normalize_text(program.department or '')
+    faculty = normalize_text(program.faculty or '')
+    content = normalize_text(program.content or '')
+
+    for kw in keywords:
+        # Strong match: keyword is in the program/page name or department
+        if kw in name:
+            score += 20
+        if kw in dept:
+            score += 15
+        if kw in faculty:
+            score += 10
+        # Weak match: keyword only appears in content body
+        score += content.count(kw) * 1
+
+    # Boost general info pages when the question has no specific program keyword.
+    # These pages (Üniversite Hakkında, Kampüs, etc.) are curated top-level summaries.
+    general_info_pages = {
+        'üniversite hakkında', 'kampüs', 'konaklama', 'yemek hizmetleri',
+        'spor ve sosyal yaşam', 'öğrenci kulüpleri', 'sağlık hizmetleri',
+        'engelli öğrenci hizmetleri', 'iletişim ve ulaşım', 'yönetim',
+        'bologna süreci', 'akts kataloğu',
+    }
+    if name in general_info_pages and score > 0:
+        score += 50
+
+    return score
+
+
 def search_bologna(question: str, max_results: int = 2) -> list[dict]:
     """Search pre-scraped Bologna data for relevant academic program info."""
     from scraper.models import BolognaProgram
@@ -307,16 +340,27 @@ def search_bologna(question: str, max_results: int = 2) -> list[dict]:
         query |= Q(program_name__icontains=kw)
         query |= Q(content__icontains=kw)
 
-    programs = BolognaProgram.objects.filter(query)[:max_results]
-    return [
-        {
+    candidates = list(BolognaProgram.objects.filter(query))
+
+    # Sort by relevance: name/department matches rank above content-only matches
+    candidates.sort(key=lambda p: score_bologna_relevance(p, keywords), reverse=True)
+
+    programs = candidates[:max_results]
+    results = []
+    for p in programs:
+        # For short content (general info pages) return everything.
+        # For long content (full course lists) extract the relevant snippet.
+        if len(p.content) <= 3000:
+            content = p.content
+        else:
+            content = extract_relevant_snippet(p.content, keywords, max_chars=1800)
+        results.append({
             'program': p.program_name,
             'faculty': p.faculty,
-            'content': extract_relevant_snippet(p.content, keywords, max_chars=1800),
+            'content': content,
             'url': p.url,
-        }
-        for p in programs
-    ]
+        })
+    return results
 
 
 def search_scraped_pages(question: str, max_results: int = 3) -> list[dict]:
@@ -378,37 +422,39 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
     """
     Given a user question, return (context_text, source_urls).
 
-    Strategy:
-    1. Search Bologna DB (pre-scraped academic programs).
-    2. Search pre-loaded ACU pages from ScrapedPage DB.
-    3. If still no context, fall back to real-time fetch.
+    Priority:
+    1. Bologna DB (OBS) — academic programs + general university info (campus, food, etc.)
+       If Bologna has results → use ONLY Bologna. It's the authoritative curated source.
+    2. ScrapedPage DB (acibadem.edu.tr) — fallback when Bologna has nothing.
+    3. Real-time fetch — last resort if both DBs are empty.
     """
     context_parts = []
     sources = []
     listing = is_listing_question(question)
 
-    # Step 1: Bologna DB (academic programs, courses, curricula)
+    # Step 1: Bologna DB — always check first, it's the priority source
     bologna_max = 4 if listing else 2
     bologna_results = search_bologna(question, max_results=bologna_max)
     for result in bologna_results:
         context_parts.append(
-            f"=== {result['faculty']} - {result['program']} (Bologna) ===\n"
+            f"=== {result['faculty']} - {result['program']} ===\n"
             f"{result['content']}"
         )
         if result['url'] not in sources:
             sources.append(result['url'])
 
-    # Step 2: Pre-scraped ACU pages stored in ScrapedPage
-    scraped_max = 4 if listing else 2
-    scraped_results = search_scraped_pages(question, max_results=scraped_max)
-    for result in scraped_results:
-        if result['url'] not in sources:
-            context_parts.append(
-                f"=== {result['title']} ===\n{result['text']}"
-            )
-            sources.append(result['url'])
+    # Step 2: ScrapedPage DB — only if Bologna found nothing
+    if not context_parts:
+        scraped_max = 4 if listing else 2
+        scraped_results = search_scraped_pages(question, max_results=scraped_max)
+        for result in scraped_results:
+            if result['url'] not in sources:
+                context_parts.append(
+                    f"=== {result['title']} ===\n{result['text']}"
+                )
+                sources.append(result['url'])
 
-    # Step 3: Real-time fallback if DB has no relevant data
+    # Step 3: Real-time fallback — only if both DBs are empty
     if not context_parts:
         logger.info("No DB results found, falling back to real-time fetch")
         rt_max = 3 if listing else 2
@@ -421,6 +467,18 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
                 context_parts.append(f"=== Kaynak: {url} ===\n{text}")
                 sources.append(url)
             time.sleep(0.5)
+
+    # Step 4: Absolute fallback — serve general university info pages
+    # Triggered when all keywords were stop words (e.g. "üniversite hakkında bilgi ver")
+    if not context_parts:
+        logger.info("No keywords matched — serving default university info pages")
+        from scraper.models import BolognaProgram
+        defaults = BolognaProgram.objects.filter(
+            program_name__in=['Üniversite Hakkında', 'Kampüs', 'Bologna Süreci']
+        )
+        for p in defaults:
+            context_parts.append(f"=== {p.faculty} - {p.program_name} ===\n{p.content}")
+            sources.append(p.url)
 
     context = '\n\n'.join(context_parts)
     return context, sources
