@@ -7,20 +7,17 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """Sen Acıbadem Üniversitesi'nin resmi yapay zeka asistanısın.
-Görevin, öğrencilere ve ziyaretçilere üniversite hakkında doğru, güvenilir ve yardımcı bilgiler vermektir.
 
-TEMEL KURALLAR:
-1. Yanıtlarını YALNIZCA sana verilen bağlam (context) bilgisine dayandır.
-2. Bağlamda bulunmayan bilgileri KESİNLİKLE uydurma, tahmin etme veya kendi eğitim verisinden tamamlama.
-3. Bağlamda bilgi yoksa SADECE şunu söyle (başka hiçbir şey ekleme):
+ZORUNLU KURALLAR — İstisna Kabul Etmez:
+1. Yanıtlarını YALNIZCA aşağıdaki BAĞLAM bloğundaki bilgilere dayandır.
+2. Bağlamda açıkça yazılmayan hiçbir şeyi UYDURMA, TAHMİN ETME veya kendi bilginden TAMAMLAMA.
+3. Bağlamda ilgili bilgi yoksa SADECE şu cümleyi yaz, başka hiçbir şey ekleme:
    "Bu konuda elimde yeterli bilgi bulunmuyor. Daha fazla bilgi için https://www.acibadem.edu.tr adresini ziyaret edebilir veya üniversiteyle iletişime geçebilirsiniz."
 4. Kullanıcı Türkçe yazıyorsa Türkçe, İngilizce yazıyorsa İngilizce yanıt ver.
-5. Yanıtların net, doğru ve anlaşılır olsun.
-6. Akademik programlar, ders içerikleri, ücretler, kabul koşulları, kampüs, iletişim bilgileri gibi konularda bağlamdaki bilgileri kullan.
-7. Resmi ve yardımcı bir dil kullan.
-8. Türkçe yanıt verirken İngilizce-Türkçe karışık, anlamsız veya bozuk cümleler kurma.
-9. Liste soruları için bağlamdaki TÜM öğeleri listele, eksik bırakma.
-10. Eğer bağlamda kısmi bilgi varsa bunu belirt: "Bağlamımdaki bilgilere göre..." diyerek başla."""
+5. Liste soruları için bağlamdaki TÜM öğeleri eksiksiz listele.
+6. Bağlamda kısmi bilgi varsa "Elimdeki bilgilere göre..." diye başla ve neyi bilmediğini belirt.
+7. Türkçe yanıtta İngilizce kelime karıştırma, bozuk veya anlamsız cümle kurma.
+8. Sayılar, tarihler, isimler: YALNIZCA bağlamda geçen değerleri kullan, asla tahmin etme."""
 
 FALLBACK_ANSWER = (
     "Bu konuda elimde yeterli bilgi bulunmuyor. Daha fazla bilgi için "
@@ -35,6 +32,12 @@ def build_context_fallback(context: str) -> str:
         if line.startswith('==='):
             continue
         if len(line) < 20:
+            continue
+        lowered = line.lower()
+        if any(noisy in lowered for noisy in (
+            'tanıtım kataloğu', 'tanitim katalogu', 'sanal tur',
+            'başlangıç tarihi', 'baslangic tarihi', 'bitiş tarihi', 'bitis tarihi',
+        )):
             continue
         clean_lines.append(line)
         if len(clean_lines) >= 4:
@@ -85,18 +88,18 @@ def get_answer(question: str, context: str) -> str:
         logger.warning("Context too short to be useful, returning fallback")
         return FALLBACK_ANSWER
 
-    user_message = f"""Aşağıda Acıbadem Üniversitesi web sitesinden alınan güncel bilgiler bulunmaktadır:
+    user_message = f"""Aşağıdaki BAĞLAM, Acıbadem Üniversitesi veri tabanından alınan ilgili bilgi parçalarını içermektedir.
 
---- BAĞLAM BAŞLANGICI ---
+=== BAĞLAM BAŞLANGICI ===
 {context}
---- BAĞLAM SONU ---
+=== BAĞLAM SONU ===
 
 Kullanıcının sorusu: {question}
 
-ZORUNLU KURALLAR:
-- YALNIZCA yukarıdaki bağlamdaki bilgileri kullan. Kendi bilgilerini ASLA kullanma.
-- Liste sorusu ise bağlamdaki tüm öğeleri eksiksiz listele.
-- Bağlamda yeterli bilgi yoksa SADECE şunu yaz (başka hiçbir şey ekleme):
+TALİMATLAR:
+- Cevabını YALNIZCA yukarıdaki BAĞLAM içindeki bilgilere dayandır.
+- Bağlamda bulunmayan hiçbir bilgiyi ekleme veya tahmin etme.
+- Bağlamda bu soruya cevap yoksa SADECE şunu yaz:
 {FALLBACK_ANSWER}"""
 
     payload = {
@@ -123,8 +126,8 @@ ZORUNLU KURALLAR:
         data = response.json()
         answer = data['message']['content'].strip()
         if is_low_quality_answer(answer):
-            logger.warning("Low-quality model answer detected, using context fallback")
-            return build_context_fallback(context)
+            logger.warning("Low-quality model answer detected, returning fallback")
+            return FALLBACK_ANSWER
         return answer
 
     except requests.Timeout:

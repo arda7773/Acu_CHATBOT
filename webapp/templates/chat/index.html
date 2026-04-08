@@ -44,12 +44,30 @@
                 <div class="sidebar-section">
                     <div class="sidebar-section-title">Geçmiş Sohbetler</div>
                     {% for s in recent_sessions %}
-                    <a href="{% url 'chat_session' s.id %}" class="history-btn {% if s.active %}active{% endif %}">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5">
-                            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-                        </svg>
-                        <span class="history-title">{{ s.title }}</span>
-                    </a>
+                    <div class="history-item" data-session-id="{{ s.id }}">
+                        <a href="{% url 'chat_session' s.id %}" class="history-btn {% if s.active %}active{% endif %}">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5">
+                                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                            </svg>
+                            <span class="history-title">{{ s.title }}</span>
+                        </a>
+                        <button
+                            class="history-delete-btn"
+                            type="button"
+                            title="Sohbeti sil"
+                            aria-label="Sohbeti sil"
+                            data-delete-url="{% url 'delete_session' s.id %}"
+                            data-active="{% if s.active %}true{% else %}false{% endif %}"
+                        >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                <line x1="10" y1="11" x2="10" y2="17"/>
+                                <line x1="14" y1="11" x2="14" y2="17"/>
+                            </svg>
+                        </button>
+                    </div>
                     {% endfor %}
                 </div>
                 {% endif %}
@@ -220,6 +238,7 @@
         const overlay         = document.getElementById('sidebar-overlay');
         const hamburgerBtn    = document.getElementById('hamburger-btn');
         const toast           = document.getElementById('toast');
+        const deleteButtons   = document.querySelectorAll('.history-delete-btn');
 
         /* ─── Scroll helpers ─── */
         function isNearBottom() {
@@ -295,6 +314,45 @@
         }
 
         document.querySelectorAll('.welcome-chip').forEach(bindQuickBtn);
+
+        deleteButtons.forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const item = btn.closest('.history-item');
+                const deleteUrl = btn.dataset.deleteUrl;
+                const isActive = btn.dataset.active === 'true';
+
+                if (!deleteUrl || !item) return;
+                if (!window.confirm('Bu sohbet silinsin mi?')) return;
+
+                btn.disabled = true;
+                try {
+                    const response = await fetch(deleteUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({}),
+                    });
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Sohbet silinemedi.');
+                    }
+
+                    if (isActive && data.redirect_url) {
+                        window.location.href = data.redirect_url;
+                        return;
+                    }
+
+                    item.remove();
+                    showToast('Sohbet silindi.', 1800);
+                } catch (err) {
+                    btn.disabled = false;
+                    showToast(err.message || 'Sohbet silinemedi.');
+                }
+            });
+        });
 
         /* ─── Keyboard shortcut ─── */
         questionInput.addEventListener('keydown', function (e) {

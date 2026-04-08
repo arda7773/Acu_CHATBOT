@@ -7,3 +7,4 @@ lxml==5.2.2
 selenium==4.21.0
 python-dotenv==1.0.1
 whitenoise==6.7.0
+pgvector==0.3.2

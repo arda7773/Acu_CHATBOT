@@ -186,6 +186,12 @@ body {
     gap: 4px;
 }
 
+.history-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
 .sidebar-section-title {
     font-size: 10.5px;
     text-transform: uppercase;
@@ -211,6 +217,7 @@ body {
     transition: background var(--transition), color var(--transition);
     line-height: 1.4;
     width: 100%;
+    padding-right: 36px;
 }
 
 .history-btn:hover {
@@ -228,6 +235,40 @@ body {
     white-space: nowrap;
     text-overflow: ellipsis;
     min-width: 0;
+}
+
+.history-delete-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.55);
+    opacity: 0;
+    cursor: pointer;
+    transition: opacity var(--transition), background var(--transition), color var(--transition);
+}
+
+.history-item:hover .history-delete-btn,
+.history-item:focus-within .history-delete-btn {
+    opacity: 1;
+}
+
+.history-delete-btn:hover {
+    background: rgba(200, 16, 46, 0.16);
+    color: #fca5a5;
+}
+
+.history-delete-btn:disabled {
+    opacity: 0.45;
+    cursor: wait;
 }
 
 /* ─── Sidebar Footer ─── */

@@ -6,6 +6,7 @@ from django.shortcuts import render, redirect
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from django.urls import reverse
 
 from .models import ChatSession, ChatMessage
 from scraper.realtime_fetcher import get_context_for_question
@@ -107,3 +108,28 @@ def new_session(request):
     session = ChatSession.objects.create()
     request.session['chat_session_id'] = str(session.id)
     return redirect('chat')
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def delete_session(request, session_id):
+    try:
+        current_session_id = request.session.get('chat_session_id')
+        session = ChatSession.objects.filter(id=session_id).first()
+        if not session:
+            return JsonResponse({'error': 'Sohbet bulunamadı.'}, status=404)
+
+        is_active = str(session.id) == str(current_session_id)
+        session.delete()
+
+        response = {'success': True, 'deleted_session_id': str(session_id)}
+        if is_active:
+            new_session = ChatSession.objects.create()
+            request.session['chat_session_id'] = str(new_session.id)
+            response['redirect_url'] = reverse('chat')
+            response['new_session_id'] = str(new_session.id)
+
+        return JsonResponse(response)
+    except Exception as e:
+        logger.error(f"Delete session error: {e}", exc_info=True)
+        return JsonResponse({'error': 'Sohbet silinemedi.'}, status=500)

@@ -12,6 +12,7 @@ from scraper.sitemap_indexer import (
     fetch_all_urls_from_sitemap,
     get_category_from_url,
 )
+from scraper.content_metadata import clean_scraped_text
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ def extract_clean_text(soup: BeautifulSoup) -> str:
 
     text = main.get_text(separator='\n', strip=True)
     lines = [line.strip() for line in text.split('\n') if line.strip()]
-    return '\n'.join(lines)
+    return clean_scraped_text('\n'.join(lines))
 
 
 def needs_dynamic_render(url: str, soup: BeautifulSoup, clean_text: str) -> bool:
@@ -134,7 +135,7 @@ def extract_page_payload(url: str, timeout: int = 20) -> dict | None:
         logger.info("Dynamic page detected, using Selenium render for %s", url)
         dynamic_text = extract_dynamic_page_text(url)
         if dynamic_text:
-            clean_text = dynamic_text
+            clean_text = clean_scraped_text(dynamic_text)
 
     if not clean_text:
         logger.warning("No main content found for %s", url)

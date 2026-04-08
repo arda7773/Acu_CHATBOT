@@ -7,16 +7,11 @@ from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
-    help = 'Pull the configured Ollama model (llama3.1:8b)'
+    help = 'Pull the chat model and nomic-embed-text embedding model'
 
     def handle(self, *args, **options):
-        model = settings.OLLAMA_MODEL
-        url = f'{settings.OLLAMA_URL}/api/pull'
-
-        self.stdout.write(f'Pulling model: {model}')
-        self.stdout.write('This may take several minutes on first run...')
-
-        # Wait for Ollama to be fully ready
+        # Wait for Ollama to be fully ready before pulling
+        self.stdout.write('Waiting for Ollama to be ready...')
         for _ in range(30):
             try:
                 r = requests.get(f'{settings.OLLAMA_URL}/api/tags', timeout=5)
@@ -26,9 +21,14 @@ class Command(BaseCommand):
                 pass
             time.sleep(3)
 
+        for model in [settings.OLLAMA_MODEL, 'nomic-embed-text']:
+            self._pull(model)
+
+    def _pull(self, model: str):
+        self.stdout.write(f'Pulling model: {model} ...')
         try:
             response = requests.post(
-                url,
+                f'{settings.OLLAMA_URL}/api/pull',
                 json={'name': model},
                 timeout=600,
                 stream=True,
@@ -52,4 +52,4 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f'Model {model} is ready!'))
 
         except requests.RequestException as e:
-            self.stdout.write(self.style.ERROR(f'Failed to pull model: {e}'))
+            self.stdout.write(self.style.ERROR(f'Failed to pull {model}: {e}'))
