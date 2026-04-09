@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import URLIndex, BolognaProgram, ScrapedPage
+from .models import URLIndex, BolognaProgram, ScrapedPage, ContentChunk
 
 
 @admin.register(URLIndex)
@@ -32,3 +32,64 @@ class BolognaProgramAdmin(admin.ModelAdmin):
     search_fields = ['program_name', 'faculty', 'department', 'content']
     list_filter = ['faculty', 'scraped_at']
     readonly_fields = ['scraped_at']
+
+
+@admin.register(ContentChunk)
+class ContentChunkAdmin(admin.ModelAdmin):
+    list_display = [
+        'title_preview',
+        'source_type',
+        'page_type',
+        'faculty',
+        'department',
+        'chunk_index',
+        'has_embedding',
+        'created_at',
+    ]
+    search_fields = [
+        'title',
+        'source_url',
+        'chunk_text',
+        'faculty',
+        'department',
+        'course_code',
+    ]
+    list_filter = [
+        'source_type',
+        'page_type',
+        'section_type',
+        'faculty',
+        'department',
+        'language',
+        'is_stable',
+        'is_noisy',
+        'created_at',
+    ]
+    readonly_fields = [
+        'source_type',
+        'source_url',
+        'title',
+        'chunk_text',
+        'chunk_index',
+        'page_type',
+        'section_type',
+        'faculty',
+        'department',
+        'course_code',
+        'language',
+        'last_updated',
+        'is_stable',
+        'is_noisy',
+        'embedding',
+        'created_at',
+    ]
+    ordering = ['-created_at']
+
+    def title_preview(self, obj):
+        return obj.title[:80] if obj.title else obj.source_url[:80]
+    title_preview.short_description = 'Başlık'
+
+    def has_embedding(self, obj):
+        return bool(obj.embedding)
+    has_embedding.boolean = True
+    has_embedding.short_description = 'Embedding'

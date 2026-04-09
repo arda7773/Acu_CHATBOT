@@ -1,0 +1,54 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+    <h1 style="margin-bottom: 20px;">Basic System Stats</h1>
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:16px; margin-bottom:28px;">
+        {% for item in stats %}
+        <div style="background:#fff; border:1px solid #d9d9d9; border-radius:10px; padding:18px;">
+            <div style="font-size:13px; color:#666; margin-bottom:8px;">{{ item.label }}</div>
+            <div style="font-size:30px; font-weight:700; line-height:1;">{{ item.value }}</div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div style="background:#fff; border:1px solid #d9d9d9; border-radius:10px; padding:20px;">
+        <h2 style="margin-top:0;">Recent Activity</h2>
+        <ul style="margin:0; padding-left:18px; line-height:1.8;">
+            <li>
+                Son chat mesajı:
+                {% if recent.last_chat_message %}
+                    {{ recent.last_chat_message.created_at }} - {{ recent.last_chat_message.question|truncatechars:80 }}
+                {% else %}
+                    Yok
+                {% endif %}
+            </li>
+            <li>
+                Son scraped page:
+                {% if recent.last_scraped_page %}
+                    {{ recent.last_scraped_page.title|default:recent.last_scraped_page.url|truncatechars:90 }}
+                {% else %}
+                    Yok
+                {% endif %}
+            </li>
+            <li>
+                Son Bologna kaydı:
+                {% if recent.last_bologna_program %}
+                    {{ recent.last_bologna_program.program_name|truncatechars:90 }}
+                {% else %}
+                    Yok
+                {% endif %}
+            </li>
+            <li>
+                Son content chunk:
+                {% if recent.last_chunk %}
+                    {{ recent.last_chunk.title|default:recent.last_chunk.source_url|truncatechars:90 }}
+                {% else %}
+                    Yok
+                {% endif %}
+            </li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
