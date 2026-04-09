@@ -7,7 +7,7 @@
     {% load static %}
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{% static 'css/chat.css' %}">
 </head>
 <body>
@@ -111,10 +111,14 @@
             <div class="messages-area" id="messages-area">
                 {% if not messages %}
                 <div class="welcome-card" id="welcome-card">
-                    <div class="welcome-icon-wrap">🎓</div>
+                    <div class="welcome-eyebrow">ACU Bilgi Asistanı</div>
+                    <div class="welcome-icon-wrap">ACU</div>
                     <h2>Acıbadem Üniversitesi<br>AI Asistanı</h2>
                     <p>Üniversite hakkında merak ettiğiniz her şeyi sorabilirsiniz.<br>
                     Akademik programlar, bölümler, kabul koşulları, kampüs ve daha fazlası.</p>
+                    <div class="welcome-note">
+                        Yanıtlar üniversite içerikleri ve taranmış akademik kaynaklar üzerinden oluşturulur.
+                    </div>
                     <div class="welcome-chips">
                         <button class="welcome-chip" data-q="Hangi bölümler mevcut?">Bölümler</button>
                         <button class="welcome-chip" data-q="Kabul koşulları nelerdir?">Kabul Koşulları</button>
