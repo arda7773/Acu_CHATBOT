@@ -4,7 +4,10 @@ from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from django.conf import settings
 from django.utils import timezone
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
 from scraper.sitemap_indexer import (
     HEADERS as INDEX_HEADERS,
@@ -100,9 +103,21 @@ def needs_dynamic_render(url: str, soup: BeautifulSoup, clean_text: str) -> bool
     )
 
 
-def extract_dynamic_page_text(url: str, timeout: int = 25) -> str:
-    from scraper.bologna_scraper import get_driver
+def get_driver():
+    options = Options()
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--window-size=1440,2200')
+    options.page_load_strategy = 'eager'
+    return webdriver.Remote(
+        command_executor=settings.SELENIUM_URL,
+        options=options,
+    )
 
+
+def extract_dynamic_page_text(url: str, timeout: int = 25) -> str:
     driver = None
     try:
         driver = get_driver()
