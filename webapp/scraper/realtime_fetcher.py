@@ -1,7 +1,9 @@
 import re
 import time
 import logging
+import unicodedata
 from collections import Counter
+from difflib import SequenceMatcher
 from statistics import mean
 from urllib.parse import parse_qs, urlparse
 
@@ -134,7 +136,59 @@ FACULTY_ALIASES = {
 
 
 def normalize_text(text: str) -> str:
-    return re.sub(r'\s+', ' ', text.lower()).strip()
+    text = unicodedata.normalize('NFKC', (text or '')).lower()
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _ascii_fold(text: str) -> str:
+    replacements = str.maketrans({
+        'ç': 'c', 'ğ': 'g', 'ı': 'i', 'İ': 'i', 'ö': 'o', 'ş': 's', 'ü': 'u',
+    })
+    return normalize_text(text).translate(replacements)
+
+
+def _normalize_compact(text: str) -> str:
+    return re.sub(r'[^a-z0-9]', '', _ascii_fold(text))
+
+
+def _word_similarity(left: str, right: str) -> float:
+    left_compact = _normalize_compact(stem_turkish(_ascii_fold(left)))
+    right_compact = _normalize_compact(stem_turkish(_ascii_fold(right)))
+    if not left_compact or not right_compact:
+        return 0.0
+    if left_compact == right_compact:
+        return 1.0
+    if len(left_compact) >= 5 and len(right_compact) >= 5:
+        if left_compact.startswith(right_compact) or right_compact.startswith(left_compact):
+            return 0.96
+    return SequenceMatcher(None, left_compact, right_compact).ratio()
+
+
+def _contains_fuzzy_phrase(text: str, phrase: str, threshold: float = 0.86) -> bool:
+    normalized_text = _ascii_fold(text)
+    normalized_phrase = _ascii_fold(phrase)
+    if not normalized_text or not normalized_phrase:
+        return False
+    if normalized_phrase in normalized_text:
+        return True
+
+    phrase_words = normalized_phrase.split()
+    text_words = normalized_text.split()
+    if not phrase_words or not text_words:
+        return False
+
+    min_window = max(1, len(phrase_words) - 1)
+    max_window = min(len(text_words), len(phrase_words) + 1)
+    for size in range(min_window, max_window + 1):
+        for idx in range(len(text_words) - size + 1):
+            candidate = ' '.join(text_words[idx:idx + size])
+            if SequenceMatcher(None, _normalize_compact(candidate), _normalize_compact(normalized_phrase)).ratio() >= threshold:
+                return True
+
+    if len(phrase_words) == 1:
+        return any(_word_similarity(word, phrase_words[0]) >= threshold for word in text_words)
+
+    return False
 
 
 def stem_turkish(word: str) -> str:
@@ -158,13 +212,12 @@ def is_listing_question(text: str) -> bool:
 
 
 def is_head_question(text: str) -> bool:
-    normalized = normalize_text(text)
-    return any(keyword in normalized for keyword in HEAD_KEYWORDS)
+    return any(_contains_fuzzy_phrase(text, keyword, threshold=0.84) for keyword in HEAD_KEYWORDS)
 
 
 def extract_keywords(text: str) -> list[str]:
     """Extract meaningful keywords from a question, including Turkish stems."""
-    text = text.lower()
+    text = normalize_text(text)
     text = re.sub(r'[^\w\s]', ' ', text)
     words = text.split()
     keywords = []
@@ -180,6 +233,18 @@ def extract_keywords(text: str) -> list[str]:
         if stem != w and stem not in STOP_WORDS and len(stem) > 2 and stem not in seen:
             keywords.append(stem)
             seen.add(stem)
+
+    for department in _find_department_mentions(text):
+        canonical_name = _department_display_name(department)
+        canonical_tokens = normalize_text(canonical_name).split()
+        for token in canonical_tokens:
+            if token not in STOP_WORDS and token not in seen:
+                keywords.append(token)
+                seen.add(token)
+            stem = stem_turkish(token)
+            if stem != token and stem not in STOP_WORDS and len(stem) > 2 and stem not in seen:
+                keywords.append(stem)
+                seen.add(stem)
     return keywords
 
 
@@ -191,10 +256,9 @@ def extract_course_codes(text: str) -> list[str]:
 
 
 def _find_department_mentions(text: str) -> list[str]:
-    normalized = normalize_text(text)
     hits = []
     for label, aliases in DEPARTMENT_ALIASES.items():
-        if any(alias in normalized for alias in aliases):
+        if any(_contains_fuzzy_phrase(text, alias, threshold=0.84) for alias in aliases):
             hits.append(label.lower())
     return hits
 
@@ -220,7 +284,10 @@ def _has_department_match(haystack: str, department: str) -> bool:
     aliases = DEPARTMENT_ALIASES.get(canonical, ())
     slugs = DEPARTMENT_URL_SLUGS.get(canonical, ())
     lowered = normalize_text(haystack)
-    return any(alias in lowered for alias in aliases) or any(slug in lowered for slug in slugs)
+    return (
+        any(_contains_fuzzy_phrase(haystack, alias, threshold=0.84) for alias in aliases) or
+        any(slug in lowered for slug in slugs)
+    )
 
 
 def _mentions_other_department(haystack: str, department: str) -> bool:
@@ -229,7 +296,7 @@ def _mentions_other_department(haystack: str, department: str) -> bool:
         if name.lower() == department:
             continue
         slugs = DEPARTMENT_URL_SLUGS.get(name, ())
-        if any(alias in lowered for alias in aliases) or any(slug in lowered for slug in slugs):
+        if any(_contains_fuzzy_phrase(haystack, alias, threshold=0.84) for alias in aliases) or any(slug in lowered for slug in slugs):
             return True
     return False
 
@@ -330,9 +397,8 @@ _INTENT_PRIORITY = [
 
 def detect_intent(text: str) -> str:
     """Return the primary intent of the question."""
-    normalized = normalize_text(text)
     for intent in _INTENT_PRIORITY:
-        if any(signal in normalized for signal in _INTENT_SIGNALS[intent]):
+        if any(_contains_fuzzy_phrase(text, signal, threshold=0.83) for signal in _INTENT_SIGNALS[intent]):
             return intent
     return INTENT_GENERAL
 
