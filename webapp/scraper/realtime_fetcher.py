@@ -134,6 +134,13 @@ FACULTY_ALIASES = {
     ),
 }
 
+FACULTY_URL_SLUGS = {
+    'Mühendislik ve Doğa Bilimleri Fakültesi': (
+        'muhendislik-ve-doga-bilimleri-fakultesi',
+        'faculty-of-engineering-and-natural-sciences',
+    ),
+}
+
 
 def normalize_text(text: str) -> str:
     text = unicodedata.normalize('NFKC', (text or '')).lower()
@@ -268,13 +275,30 @@ def _primary_department(question: str) -> str:
     return matches[0] if matches else ''
 
 
+def _primary_faculty(question: str) -> str:
+    normalized = normalize_text(question)
+    for label, aliases in FACULTY_ALIASES.items():
+        if any(_contains_fuzzy_phrase(normalized, alias, threshold=0.84) for alias in aliases):
+            return label.lower()
+    return ''
+
+
 def _department_slug_variants(department: str) -> tuple[str, ...]:
     canonical = next((name for name in DEPARTMENT_URL_SLUGS if name.lower() == department), '')
     return DEPARTMENT_URL_SLUGS.get(canonical, ())
 
 
+def _faculty_slug_variants(faculty: str) -> tuple[str, ...]:
+    canonical = next((name for name in FACULTY_URL_SLUGS if name.lower() == faculty), '')
+    return FACULTY_URL_SLUGS.get(canonical, ())
+
+
 def _department_display_name(department: str) -> str:
     return next((name for name in DEPARTMENT_ALIASES if name.lower() == department), department)
+
+
+def _faculty_display_name(faculty: str) -> str:
+    return next((name for name in FACULTY_ALIASES if name.lower() == faculty), faculty)
 
 
 def _has_department_match(haystack: str, department: str) -> bool:
@@ -862,6 +886,7 @@ def search_scraped_pages(question: str, max_results: int = 3) -> list[dict]:
         return []
     asks_for_staff = is_staff_question(question)
     target_department = _primary_department(question)
+    target_faculty = _primary_faculty(question)
     listing_q = is_listing_question(question)
     asks_for_bolum = any(kw in ('bölüm', 'bolum', 'bölümler', 'bolumler', 'program', 'programlar') for kw in keywords)
 
@@ -879,6 +904,10 @@ def search_scraped_pages(question: str, max_results: int = 3) -> list[dict]:
             extract_course_codes(question),
             max_results=max_results,
         )
+        if targeted_results:
+            return targeted_results
+    if listing_q and asks_for_bolum and target_faculty:
+        targeted_results = _search_targeted_faculty_department_pages(target_faculty, max_results=max_results)
         if targeted_results:
             return targeted_results
 
@@ -1022,6 +1051,46 @@ def _search_targeted_head_pages(department: str, max_results: int = 3) -> list[d
         results.append({
             'url': page.url,
             'title': f"{title_prefix} Bölüm Başkanı",
+            'text': page.text[:2200],
+        })
+        if len(results) >= max_results:
+            break
+
+    return results
+
+
+def _search_targeted_faculty_department_pages(faculty: str, max_results: int = 6) -> list[dict]:
+    from scraper.models import URLIndex
+
+    slugs = _faculty_slug_variants(faculty)
+    if not slugs:
+        return []
+
+    query = Q()
+    for slug in slugs:
+        query |= Q(url__icontains=slug)
+
+    indexed_urls = list(
+        URLIndex.objects
+        .filter(query)
+        .filter(Q(url__icontains='/bolumler/') | Q(url__icontains='/departments/'))
+        .values_list('url', flat=True)
+    )
+
+    results = []
+    seen_departments = set()
+    faculty_title = _faculty_display_name(faculty)
+    for url in indexed_urls:
+        page = _load_or_scrape_page(url)
+        if not page:
+            continue
+        department = infer_department(page.title, page.text, page.url)
+        if not department or department in seen_departments:
+            continue
+        seen_departments.add(department)
+        results.append({
+            'url': page.url,
+            'title': f"{faculty_title} - {department}",
             'text': page.text[:2200],
         })
         if len(results) >= max_results:
@@ -1503,6 +1572,7 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
     entities = extract_named_entities(question)
     listing  = is_listing_question(question)
     target_department = _primary_department(question)
+    target_faculty = _primary_faculty(question)
     context_parts: list[str] = []
     sources:        list[str] = []
 
@@ -1538,6 +1608,20 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
     if intent == INTENT_STAFF and target_department:
         logger.info("[RETRIEVAL] targeted staff lookup for department=%s", target_department)
         for result in search_scraped_pages(question, max_results=3):
+            if result['url'] in sources:
+                continue
+            context_parts.append(f"=== {result['title']} ===\n{result['text']}")
+            sources.append(result['url'])
+        if context_parts:
+            return '\n\n'.join(context_parts), sources
+
+    asks_for_departments = any(
+        kw in ('bölüm', 'bolum', 'bölümler', 'bolumler', 'program', 'programlar')
+        for kw in keywords
+    )
+    if listing and asks_for_departments and target_faculty:
+        logger.info("[RETRIEVAL] targeted faculty listing for faculty=%s", target_faculty)
+        for result in _search_targeted_faculty_department_pages(target_faculty, max_results=8):
             if result['url'] in sources:
                 continue
             context_parts.append(f"=== {result['title']} ===\n{result['text']}")
