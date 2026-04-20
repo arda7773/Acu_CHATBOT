@@ -88,6 +88,12 @@ def classify_page_type(url: str, title: str = '', text: str = '') -> str:
         (('duyurular', 'announcement'), 'announcement'),
         (('etkinlikler', 'event'), 'event'),
         (('haberler', 'news'), 'news'),
+        ((
+            'erasmus', 'erasmus+', 'exchange program', 'exchange programs',
+            'institutional agreement', 'institutional agreements',
+            'partner university', 'partner universities',
+            'uluslararası ofis', 'uluslararasi ofis', 'international office',
+        ), 'exchange'),
         (('iletisim', 'contact', 'telefon', 'e-posta', 'email'), 'contact'),
         (('kampus', 'yerleske', 'yerleşke', 'kampüs olanak', 'surdurulebilir-kampus', 'sürdürülebilir kampüs'), 'campus'),
         (('ogrenci yasami', 'öğrenci yaşamı', 'kulup', 'kulüp', 'life at acu'), 'student_life'),
@@ -110,6 +116,8 @@ def infer_section_type(url: str, source_type: str, page_type: str) -> str:
     path = urlparse(url).path.lower()
     if source_type == 'bologna':
         return 'bologna'
+    if any(token in path for token in ('/international-office/', '/exchange-programs/', '/institutional-agreements', '/erasmus')):
+        return 'exchange'
     if '/aday/' in path or '/uluslararasi-ofis/' in path:
         return 'admissions'
     if '/akademik/' in path:

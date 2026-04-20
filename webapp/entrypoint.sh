@@ -27,13 +27,16 @@ python manage.py check
 echo "[4/6] Collecting static files..."
 python manage.py collectstatic --no-input
 
-echo "[5/6] Waiting for Ollama..."
+echo "[5/7] Loading seed data into database..."
+python manage.py load_acu_data --file acu_data.json
+
+echo "[6/7] Waiting for Ollama..."
 until curl -s http://ollama:11434/api/tags > /dev/null 2>&1; do
   sleep 3
 done
 echo "Ollama is ready!"
 
-echo "[6/6] Pulling models (background)..."
+echo "[7/7] Pulling models (background)..."
 python manage.py pull_model &
 
 echo "=== Starting Gunicorn on port 8000 ==="

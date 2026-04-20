@@ -79,6 +79,16 @@ CONTACT_TERMS = {
     'adres', 'address', 'contact',
 }
 
+EXCHANGE_TERMS = {
+    'erasmus', 'erasmus+', 'exchange', 'değişim', 'degisim',
+    'değişim programı', 'degisim programi', 'partner üniversite',
+    'partner universite', 'partner university', 'institutional agreement',
+    'institutional agreements', 'ikili anlaşma', 'ikili anlasma',
+    'global exchange', 'learning mobility', 'traineeship mobility',
+    'öğrenim hareketliliği', 'ogrenim hareketliligi',
+    'staj hareketliliği', 'staj hareketliligi',
+}
+
 HEAD_KEYWORDS = {
     'bölüm başkanı', 'bolum baskani', 'anabilim dalı başkanı', 'program başkanı',
     'program baskani', 'chair', 'head of department', 'director',
@@ -367,6 +377,7 @@ INTENT_DEPARTMENT   = 'department'
 INTENT_ADMISSION    = 'admission'
 INTENT_CONTACT      = 'contact'
 INTENT_ANNOUNCEMENT = 'announcement'
+INTENT_EXCHANGE     = 'exchange'
 
 # Signals per intent — checked in priority order (more specific first)
 _INTENT_SIGNALS: dict[str, list[str]] = {
@@ -382,6 +393,18 @@ _INTENT_SIGNALS: dict[str, list[str]] = {
         'başvuru', 'kayıt', 'kabul', 'yks', 'tyt', 'ayt', 'puan',
         'kontenjan', 'taban puan', 'yerleşme', 'nasıl girilir',
         'admission', 'application', 'requirements', 'burs', 'ücret', 'harç',
+        'fiyat', 'fiyatlar', 'ücretler', 'öğrenim ücreti', 'eğitim ücreti',
+        'tuition fee', 'tuition fees', 'ne kadar', 'kaç para', 'maliyet',
+        'burslu ücret', 'bursuz ücret', 'indirimli ücret',
+    ],
+    INTENT_EXCHANGE: [
+        'erasmus', 'erasmus+', 'değişim programı', 'degisim programi',
+        'exchange program', 'exchange programs', 'global exchange',
+        'partner university', 'partner universities', 'institutional agreement',
+        'institutional agreements', 'ikili anlaşma', 'ikili anlasma',
+        'öğrenim hareketliliği', 'ogrenim hareketliligi',
+        'staj hareketliliği', 'staj hareketliligi',
+        'international office', 'uluslararası ofis', 'uluslararasi ofis',
     ],
     INTENT_CONTACT: [
         'iletişim', 'adres', 'telefon', 'e-posta', 'eposta',
@@ -413,7 +436,7 @@ _INTENT_SIGNALS: dict[str, list[str]] = {
 }
 
 _INTENT_PRIORITY = [
-    INTENT_BOLOGNA, INTENT_STAFF, INTENT_ADMISSION, INTENT_CONTACT,
+    INTENT_BOLOGNA, INTENT_STAFF, INTENT_EXCHANGE, INTENT_ADMISSION, INTENT_CONTACT,
     INTENT_CAMPUS, INTENT_STUDENT_LIFE, INTENT_COURSE,
     INTENT_ANNOUNCEMENT, INTENT_DEPARTMENT,
 ]
@@ -437,6 +460,7 @@ def is_bologna_question(text: str) -> bool:
 def is_acu_site_question(text: str) -> bool:
     return detect_intent(text) in (
         INTENT_ADMISSION, INTENT_CONTACT, INTENT_ANNOUNCEMENT,
+        INTENT_EXCHANGE,
         INTENT_CAMPUS, INTENT_STUDENT_LIFE,
     )
 
@@ -451,6 +475,10 @@ def is_campus_question(text: str) -> bool:
 
 _URL_STABILITY_RULES: list[tuple[str, float, str]] = [
     # Highly stable factual pages — positive scores
+    ('/institutional-agreements',    +0.26, 'exchange'),
+    ('/exchange-programs',           +0.24, 'exchange'),
+    ('/international-office',        +0.20, 'exchange'),
+    ('/erasmus',                     +0.22, 'exchange'),
     ('/akademik-kadro',            +0.25, 'staff'),
     ('/iletisim',                  +0.20, 'contact'),
     ('/kampus',                    +0.18, 'campus'),
@@ -476,6 +504,7 @@ _URL_STABILITY_RULES: list[tuple[str, float, str]] = [
 # Preferred page types per intent (intent_boost applied when matched)
 _INTENT_PREFERRED_PAGE_TYPES: dict[str, list[str]] = {
     INTENT_STAFF:        ['staff'],
+    INTENT_EXCHANGE:     ['exchange', 'admission', 'contact', 'about'],
     INTENT_CAMPUS:       ['campus', 'student_life', 'about'],
     INTENT_STUDENT_LIFE: ['student_life', 'campus'],
     INTENT_CONTACT:      ['contact'],
@@ -533,6 +562,12 @@ _QUERY_EXPANSIONS: dict[str, list[str]] = {
         'başvuru koşulları', 'taban puan', 'kontenjan', 'yks puanı',
         'kayıt gereklilikleri', 'kabul şartları', 'burs imkânları',
     ],
+    INTENT_EXCHANGE: [
+        'erasmus', 'exchange programs', 'institutional agreements',
+        'partner universities', 'partner countries', 'learning mobility',
+        'traineeship mobility', 'international office', 'ikili anlaşmalar',
+        'öğrenim hareketliliği', 'staj hareketliliği',
+    ],
     INTENT_CONTACT: [
         'iletişim bilgileri', 'telefon numarası', 'e-posta adresi',
         'ofis adresi', 'nasıl ulaşılır',
@@ -553,6 +588,9 @@ _GLOBAL_QUERY_EXPANSIONS = {
     'iletisim': ['contact', 'telefon', 'email', 'address'],
     'başvuru': ['admission', 'application', 'requirements', 'scholarship'],
     'basvuru': ['admission', 'application', 'requirements', 'scholarship'],
+    'erasmus': ['exchange', 'partner university', 'institutional agreements', 'country'],
+    'değişim': ['exchange', 'erasmus', 'partner university', 'institutional agreements'],
+    'degisim': ['exchange', 'erasmus', 'partner university', 'institutional agreements'],
 }
 
 
@@ -704,6 +742,23 @@ def score_page_relevance(question: str, page, keywords: list[str]) -> int:
             score += 25
         if '/duyurular/' in url or '/haberler/' in url or '/etkinlikler/' in url:
             score -= 40
+    if intent == INTENT_EXCHANGE:
+        if any(term in url for term in (
+            'international-office', 'exchange-programs', 'erasmus',
+            'institutional-agreements', 'global-exchange',
+        )):
+            score += 45
+        if any(term in title for term in (
+            'erasmus', 'exchange', 'değişim', 'institutional agreements',
+            'partner', 'international office',
+        )):
+            score += 30
+        if any(term in text for term in (
+            'erasmus', 'partner university', 'partner universities',
+            'institutional agreements', 'ikili anlaşma', 'ikili anlaşmalar',
+            'ülke', 'ülkeler', 'country', 'countries',
+        )):
+            score += 18
     if intent in (INTENT_COURSE, INTENT_DEPARTMENT):
         if 'obs.acibadem.edu.tr' in url:
             score += 20
@@ -1187,6 +1242,206 @@ def _search_targeted_course_pages(
     return results
 
 
+def _is_fee_question(question: str) -> bool:
+    normalized = normalize_text(question)
+    return any(term in normalized for term in (
+        'ucret', 'fiyat', 'ne kadar', 'kac para', 'maliyet',
+        'tuition', 'burslu', 'bursuz', 'indirimli', 'harc',
+    ))
+
+
+def _search_targeted_fee_pages(question: str) -> list[dict]:
+    keywords = extract_keywords(question)
+    target_department = _primary_department(question)
+
+    fee_urls = [
+        'https://www.acibadem.edu.tr/aday/ogrenci/egitim/lisans/lisans-ogrenim-ucretleri-2025-2026',
+        'https://www.acibadem.edu.tr/kayit/ucretler-ve-odeme-yontemleri',
+        'https://www.acibadem.edu.tr/aday/ogrenci/egitim/burs/burs-olanaklari',
+    ]
+
+    results = []
+    for url in fee_urls:
+        page = _load_or_scrape_page(url)
+        if not page or not page.text.strip():
+            continue
+        if target_department and 'ucretleri' in url:
+            snippet = _extract_department_fee_section(page.text, target_department)
+        else:
+            snippet = extract_relevant_snippet(
+                page.text,
+                keywords + ['ucret', 'fiyat', 'burs', 'indirim', 'tl'],
+                max_chars=3000,
+            )
+        if snippet:
+            results.append({'url': page.url, 'title': page.title, 'text': snippet})
+    return results
+
+
+def _extract_department_fee_section(text: str, department: str) -> str:
+    canonical = next((name for name in DEPARTMENT_ALIASES if name.lower() == department), department)
+    aliases = list(DEPARTMENT_ALIASES.get(canonical, (canonical,)))
+
+    lines = text.split('\n')
+    start_idx = -1
+    for i, line in enumerate(lines):
+        normalized_line = normalize_text(line)
+        if any(_contains_fuzzy_phrase(normalized_line, normalize_text(a), threshold=0.84) for a in aliases):
+            start_idx = i
+            break
+
+    if start_idx == -1:
+        return extract_relevant_snippet(text, aliases + ['ucret', 'tl'], max_chars=2000)
+
+    section_lines = []
+    for line in lines[max(0, start_idx - 1):start_idx + 8]:
+        section_lines.append(line)
+
+    return '\n'.join(section_lines)[:2000]
+
+
+def _exchange_question_mentions_countries(question: str) -> bool:
+    normalized = normalize_text(question)
+    return any(term in normalized for term in (
+        'hangi ülk', 'hangi ulk', 'ülke', 'ulke', 'ülkeler', 'ulkeler',
+        'country', 'countries',
+    ))
+
+
+def _extract_department_erasmus_section(text: str, department: str, max_chars: int = 3500) -> str:
+    """Extract the contiguous İkili Anlaşmalar table section for a specific department."""
+    canonical = next((name for name in DEPARTMENT_ALIASES if name.lower() == department), department)
+    aliases = list(DEPARTMENT_ALIASES.get(canonical, (canonical,)))
+
+    lines = text.split('\n')
+    start_idx = -1
+    for i, line in enumerate(lines):
+        normalized_line = normalize_text(line)
+        if any(_contains_fuzzy_phrase(normalized_line, normalize_text(alias), threshold=0.84) for alias in aliases):
+            start_idx = i
+            break
+
+    if start_idx == -1:
+        return extract_relevant_snippet(text, aliases, max_chars=max_chars)
+
+    # Section ends when another department/faculty header appears
+    section_lines = [lines[start_idx]]
+    dept_header_keywords = {normalize_text(a) for aliases_list in DEPARTMENT_ALIASES.values() for a in aliases_list}
+    faculty_markers = ('fakülte', 'yüksekokul', 'enstitü', 'myo', 'fakulte', 'yuksekokul', 'enstitu')
+
+    for line in lines[start_idx + 1:]:
+        normalized_line = normalize_text(line)
+        is_new_dept = any(_contains_fuzzy_phrase(normalized_line, kw, threshold=0.88) for kw in dept_header_keywords if len(kw) > 5)
+        is_faculty_header = any(m in normalized_line for m in faculty_markers)
+        if (is_new_dept or is_faculty_header) and normalized_line != normalize_text(lines[start_idx]):
+            break
+        section_lines.append(line)
+
+    section = '\n'.join(section_lines)
+    return section[:max_chars]
+
+
+def _search_targeted_exchange_pages(question: str, max_results: int = 5) -> list[dict]:
+    from scraper.models import URLIndex
+
+    keywords = extract_keywords(expand_query(question, INTENT_EXCHANGE))
+    target_department = _primary_department(question)
+    asks_countries = _exchange_question_mentions_countries(question)
+
+    query = Q()
+    for term in (
+        'international-office',
+        'exchange-programs',
+        'institutional-agreements',
+        'global-exchange',
+        'erasmus',
+    ):
+        query |= Q(url__icontains=term)
+        query |= Q(title__icontains=term)
+        query |= Q(path_keywords__icontains=term)
+
+    indexed_urls: list[str] = []
+    try:
+        indexed_urls = list(URLIndex.objects.filter(query).values_list('url', flat=True)[:60])
+    except Exception:
+        indexed_urls = []
+
+    candidate_urls = list(dict.fromkeys(indexed_urls + [
+        'https://www.acibadem.edu.tr/uluslararasi-ofis/degisim-programlari/erasmus/ikili-anlasmalar',
+        'https://www.acibadem.edu.tr/uluslararasi-ofis/degisim-programlari/erasmus/ogrenci-hareketliligi',
+        'https://www.acibadem.edu.tr/uluslararasi-ofis/degisim-programlari/global-degisim-programlari',
+        'https://www.acibadem.edu.tr/uluslararasi-ofis/degisim-programlari/erasmus/koordinatorler-listesi',
+        'https://www.acibadem.edu.tr/en/international-office/exchange-programs/erasmus/erasmus-agreements',
+        'https://www.acibadem.edu.tr/en/international-office/exchange-programs/erasmus/student-mobility',
+        'https://www.acibadem.edu.tr/en/international-office/about',
+        'https://www.acibadem.edu.tr/en/international-office/exchange-programs',
+        'https://www.acibadem.edu.tr/en/international-office/exchange-programs/erasmus',
+        'https://www.acibadem.edu.tr/en/international-office/exchange-programs/global-exchange-programs',
+        'https://www.acibadem.edu.tr/en/international-office/institutional-agreements',
+    ]))
+
+    scored_results: list[tuple[int, dict]] = []
+    for url in candidate_urls:
+        page = _load_or_scrape_page(url)
+        if not page:
+            continue
+
+        haystack = normalize_text(f"{page.title} {page.url} {page.text[:6000]}")
+        score = 0
+
+        for kw in keywords:
+            score += haystack.count(kw) * 3
+            score += normalize_text(page.url).count(kw) * 4
+            score += normalize_text(page.title).count(kw) * 5
+
+        if any(term in haystack for term in (
+            'erasmus', 'exchange program', 'exchange programs',
+            'değişim program', 'degisim program',
+        )):
+            score += 30
+        if any(term in haystack for term in (
+            'institutional agreement', 'institutional agreements',
+            'partner university', 'partner universities',
+            'ikili anlaşma', 'ikili anlaşmalar',
+        )):
+            score += 24
+        if asks_countries and any(term in haystack for term in (
+            'country', 'countries', 'ülke', 'ülkeler', 'partner university',
+        )):
+            score += 18
+        if target_department:
+            if _has_department_match(haystack, target_department):
+                score += 35
+            elif _mentions_other_department(haystack, target_department):
+                score -= 10
+        if 'international-office' in normalize_text(page.url):
+            score += 10
+
+        if score <= 0:
+            continue
+
+        is_agreements_page = any(s in page.url for s in ('ikili-anlasmalar', 'erasmus-agreements'))
+        if is_agreements_page and target_department:
+            snippet = _extract_department_erasmus_section(page.text, target_department, max_chars=3500)
+        else:
+            snippet = extract_relevant_snippet(
+                page.text,
+                keywords + ['erasmus', 'exchange', 'partner', 'country'],
+                max_chars=2600,
+            )
+        scored_results.append((
+            score,
+            {
+                'url': page.url,
+                'title': page.title,
+                'text': snippet,
+            },
+        ))
+
+    scored_results.sort(key=lambda item: item[0], reverse=True)
+    return [result for _, result in scored_results[:max_results]]
+
+
 def _curated_scraped_fallback(intent: str, max_results: int = 3) -> list[dict]:
     from scraper.models import ScrapedPage
 
@@ -1210,8 +1465,22 @@ def _curated_scraped_fallback(intent: str, max_results: int = 3) -> list[dict]:
         query = (
             Q(url__icontains='aday') |
             Q(url__icontains='basvuru') |
+            Q(url__icontains='ucret') |
+            Q(url__icontains='tuition') |
             Q(title__icontains='Başvuru') |
-            Q(title__icontains='Burs')
+            Q(title__icontains='Burs') |
+            Q(title__icontains='Ücret') |
+            Q(title__icontains='Tuition')
+        )
+    elif intent == INTENT_EXCHANGE:
+        query = (
+            Q(url__icontains='international-office') |
+            Q(url__icontains='exchange-programs') |
+            Q(url__icontains='institutional-agreements') |
+            Q(url__icontains='erasmus') |
+            Q(title__icontains='Erasmus') |
+            Q(title__icontains='Exchange') |
+            Q(title__icontains='Institutional Agreements')
         )
     else:
         return []
@@ -1260,7 +1529,27 @@ def _supplement_semantic_candidates(question: str, intent: str) -> list[dict]:
                 'is_noisy': False,
             })
 
-    if intent in (INTENT_CAMPUS, INTENT_CONTACT, INTENT_ADMISSION, INTENT_STUDENT_LIFE):
+    if intent == INTENT_EXCHANGE:
+        for result in _search_targeted_exchange_pages(question, max_results=8):
+            page_type = classify_page_type(result['url'], result['title'], result['text'])
+            candidates.append({
+                'text': result['text'],
+                'title': result['title'],
+                'url': result['url'],
+                'source_type': 'scraped',
+                'distance': 0.28,
+                'page_type': page_type,
+                'section_type': 'exchange',
+                'faculty': '',
+                'department': '',
+                'course_code': '',
+                'language': 'en' if '/en/' in result['url'] else 'tr',
+                'last_updated': '',
+                'is_stable': page_type not in _NOISY_PAGE_TYPES,
+                'is_noisy': page_type in _NOISY_PAGE_TYPES,
+            })
+
+    if intent in (INTENT_CAMPUS, INTENT_CONTACT, INTENT_ADMISSION, INTENT_STUDENT_LIFE, INTENT_EXCHANGE):
         for result in search_scraped_pages(question, max_results=6):
             page_type = classify_page_type(result['url'], result['title'], result['text'])
             candidates.append({
@@ -1438,6 +1727,8 @@ def _intent_metadata_boost(chunk: dict, intent: str) -> float:
         boost += 0.30
     if intent == INTENT_ADMISSION and page_type == 'admission':
         boost += 0.25
+    if intent == INTENT_EXCHANGE and page_type == 'exchange':
+        boost += 0.34
     if intent == INTENT_DEPARTMENT and page_type in {'department', 'academic'}:
         boost += 0.20
     if intent == INTENT_COURSE and (page_type == 'course' or chunk.get('source_type') == 'bologna'):
@@ -1615,6 +1906,26 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
         if context_parts:
             return '\n\n'.join(context_parts), sources
 
+    if intent == INTENT_EXCHANGE:
+        logger.info("[RETRIEVAL] targeted exchange lookup")
+        for result in _search_targeted_exchange_pages(question, max_results=5):
+            if result['url'] in sources:
+                continue
+            context_parts.append(f"=== {result['title']} ===\n{result['text']}")
+            sources.append(result['url'])
+        if len(context_parts) >= 2:
+            return '\n\n'.join(context_parts), sources
+
+    if intent == INTENT_ADMISSION and _is_fee_question(question):
+        logger.info("[RETRIEVAL] targeted fee lookup")
+        for result in _search_targeted_fee_pages(question):
+            if result['url'] in sources:
+                continue
+            context_parts.append(f"=== {result['title']} ===\n{result['text']}")
+            sources.append(result['url'])
+        if context_parts:
+            return '\n\n'.join(context_parts), sources
+
     asks_for_departments = any(
         kw in ('bölüm', 'bolum', 'bölümler', 'bolumler', 'program', 'programlar')
         for kw in keywords
@@ -1641,7 +1952,7 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
         # Source routing: Bologna-only, scraped-only, or all
         if intent == INTENT_BOLOGNA:
             source_type = 'bologna'
-        elif intent in (INTENT_ADMISSION, INTENT_CONTACT, INTENT_ANNOUNCEMENT):
+        elif intent in (INTENT_ADMISSION, INTENT_CONTACT, INTENT_ANNOUNCEMENT, INTENT_EXCHANGE):
             source_type = 'scraped'
         else:
             # Campus, student_life, course, department, general, staff → search both
@@ -1690,7 +2001,13 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
                     sources.append(result['url'])
 
         elif intent in (INTENT_ADMISSION, INTENT_CONTACT, INTENT_ANNOUNCEMENT,
-                        INTENT_CAMPUS, INTENT_STUDENT_LIFE):
+                        INTENT_CAMPUS, INTENT_STUDENT_LIFE, INTENT_EXCHANGE):
+            if intent == INTENT_EXCHANGE:
+                for result in _search_targeted_exchange_pages(question, max_results=5):
+                    if result['url'] not in sources:
+                        context_parts.append(f"=== {result['title']} ===\n{result['text']}")
+                        sources.append(result['url'])
+
             curated_results = _curated_scraped_fallback(intent, max_results=3)
             for result in curated_results:
                 if result['url'] not in sources:
