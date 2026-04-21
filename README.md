@@ -10,6 +10,7 @@ The system uses:
 - Docker Compose for orchestration
 - GitHub Actions for CI
 - Render blueprint config for cloud deployment
+- Kubernetes manifests for deployment-ready orchestration
 - Nginx reverse proxy for optional deployment enhancement
 - Streaming chat responses
 - Prometheus + Grafana monitoring stack
@@ -30,6 +31,7 @@ The system uses:
 ```text
 ACU_ChatBot/
 ├── docker-compose.yml
+├── k8s/
 ├── .env.example
 ├── README.md
 ├── docs/
@@ -182,6 +184,39 @@ This repository includes cloud deployment preparation in the following form:
 - CI checks that validate the project before deployment
 
 Because the system includes resource-heavy services such as Ollama and Selenium, a live public deployment was treated as optional infrastructure work rather than a required runtime step. The repository is therefore prepared for deployment and documented accordingly, even when no live cloud instance is currently running.
+
+## Kubernetes
+
+The repository also includes a deployment-ready Kubernetes manifest set under:
+
+```text
+k8s/
+```
+
+Included resources:
+
+- `Namespace`
+- `ConfigMap` and example `Secret`
+- `PersistentVolumeClaim` objects for PostgreSQL and Ollama
+- `Deployment` + `Service` for `webapp`, `db`, `ollama`, and `selenium`
+- `Ingress` for exposing the Django service
+
+This Kubernetes setup is intentionally kept separate from Docker Compose so the local development workflow is not affected.
+
+### Kubernetes Notes
+
+- The web application manifest uses `acu-chatbot-webapp:latest` by default.
+- For local clusters such as Minikube or kind, build the image first, then load or tag it into the cluster runtime.
+- Before applying the manifests, copy `k8s/secret.example.yaml` to a real secret file and replace placeholder credentials.
+- The manifests are intended to demonstrate Kubernetes deployment readiness and can be adapted for a managed cluster later.
+
+### Example Minikube Flow
+
+```bash
+docker build -t acu-chatbot-webapp:latest ./webapp
+minikube image load acu-chatbot-webapp:latest
+kubectl apply -k k8s/
+```
 
 ## First-Time Data Preparation
 

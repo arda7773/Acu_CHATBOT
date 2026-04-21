@@ -1,0 +1,9 @@
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.example.yaml
+  - postgres.yaml
+  - ollama.yaml
+  - selenium.yaml
+  - webapp.yaml
+  - ingress.yaml
