@@ -1,0 +1,57 @@
+services:
+  - type: web
+    name: acu-chatbot-web
+    env: docker
+    plan: free
+    dockerContext: ./webapp
+    dockerfilePath: ./webapp/Dockerfile
+    healthCheckPath: /admin/login/
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com,localhost,127.0.0.1"
+      - key: CSRF_TRUSTED_ORIGINS
+        value: "https://*.onrender.com"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: acu-chatbot-db
+          property: connectionString
+      - key: OLLAMA_URL
+        value: "http://acu-chatbot-ollama:11434"
+      - key: SELENIUM_URL
+        value: "http://acu-chatbot-selenium:4444/wd/hub"
+      - key: WAIT_FOR_DB
+        value: "true"
+      - key: WAIT_FOR_OLLAMA
+        value: "true"
+      - key: LOAD_SEED_DATA
+        value: "true"
+      - key: PULL_MODELS_ON_START
+        value: "true"
+      - key: OLLAMA_MODEL
+        value: "llama3.1:8b"
+
+  - type: pserv
+    name: acu-chatbot-ollama
+    env: docker
+    plan: starter
+    dockerContext: ./deploy/ollama
+    dockerfilePath: ./deploy/ollama/Dockerfile
+    disk:
+      name: ollama-data
+      mountPath: /root/.ollama
+      sizeGB: 10
+
+  - type: pserv
+    name: acu-chatbot-selenium
+    env: docker
+    plan: starter
+    dockerContext: ./deploy/selenium
+    dockerfilePath: ./deploy/selenium/Dockerfile
+
+databases:
+  - name: acu-chatbot-db
+    plan: free

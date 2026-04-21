@@ -8,6 +8,8 @@ The system uses:
 - Ollama for running the LLM locally
 - Selenium for JavaScript-heavy pages during scraping
 - Docker Compose for orchestration
+- GitHub Actions for CI
+- Render blueprint config for cloud deployment
 
 ## Features
 
@@ -104,6 +106,60 @@ The app will be available at:
 Admin panel:
 
 - `http://localhost:8000/admin`
+
+## CI/CD
+
+This repository includes a GitHub Actions workflow at:
+
+```text
+.github/workflows/ci.yml
+```
+
+The workflow currently does two safe checks on every push / pull request:
+
+- installs Python dependencies
+- runs Python syntax compilation and `manage.py check`
+- builds the Django Docker image
+
+This gives you a lightweight CI pipeline without changing runtime behavior.
+
+## Cloud Deployment (Render)
+
+The project now includes a Render blueprint file:
+
+```text
+render.yaml
+```
+
+It defines:
+
+- `acu-chatbot-web` as the Django web service
+- `acu-chatbot-db` as PostgreSQL
+- `acu-chatbot-ollama` as a private Ollama service
+- `acu-chatbot-selenium` as a private Selenium service
+
+Important notes:
+
+- Render deployment is configured as deploy-ready infrastructure, not as a guaranteed production-tuned setup.
+- Ollama and Selenium on cloud instances can require more memory / paid plans than a free environment allows.
+- The web service uses environment variables like `DATABASE_URL`, `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, `OLLAMA_URL`, and `SELENIUM_URL`.
+
+### Deploy on Render
+
+1. Push the repository to GitHub.
+2. In Render, create a new Blueprint instance from the repository.
+3. Select `ACU_ChatBot/render.yaml`.
+4. Review service plans and environment values.
+5. Deploy the stack.
+
+If you prefer to skip slow startup steps in cloud environments, you can override:
+
+```env
+LOAD_SEED_DATA=false
+PULL_MODELS_ON_START=false
+```
+
+You can then run data loading / model pulling manually after deployment.
 
 ## First-Time Data Preparation
 
@@ -223,10 +279,11 @@ Implemented:
 - Scraping pipeline
 - pgvector-based semantic retrieval
 - Responsive chat UI
+- GitHub Actions CI workflow
+- Render deployment blueprint
 
 Still expected separately from this repository:
 
 - Final technical report
 - Presentation/demo script
 - Team contribution summary if required by the instructor
-

@@ -1,15 +1,27 @@
 #!/bin/bash
 set -e
 
+DB_HOST="${DB_HOST:-db}"
+DB_PORT="${DB_PORT:-5432}"
+WAIT_FOR_DB="${WAIT_FOR_DB:-true}"
+WAIT_FOR_OLLAMA="${WAIT_FOR_OLLAMA:-true}"
+LOAD_SEED_DATA="${LOAD_SEED_DATA:-true}"
+PULL_MODELS_ON_START="${PULL_MODELS_ON_START:-true}"
+OLLAMA_URL="${OLLAMA_URL:-http://ollama:11434}"
+
 echo "=== ACU ChatBot Starting ==="
 
-echo "[1/6] Waiting for PostgreSQL..."
-until nc -z db 5432; do
-  sleep 1
-done
-echo "PostgreSQL is ready!"
+if [ "$WAIT_FOR_DB" = "true" ]; then
+  echo "[1/7] Waiting for PostgreSQL..."
+  until nc -z "$DB_HOST" "$DB_PORT"; do
+    sleep 1
+  done
+  echo "PostgreSQL is ready!"
+else
+  echo "[1/7] Skipping PostgreSQL wait."
+fi
 
-echo "[2/6] Enabling pgvector extension..."
+echo "[2/7] Enabling pgvector extension..."
 python -c "
 import django, os
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
@@ -20,24 +32,36 @@ with connection.cursor() as c:
 print('pgvector extension ready.')
 " || true
 
-echo "[3/6] Running migrations..."
+echo "[3/7] Running migrations..."
 python manage.py migrate
 python manage.py check
 
-echo "[4/6] Collecting static files..."
+echo "[4/7] Collecting static files..."
 python manage.py collectstatic --no-input
 
-echo "[5/7] Loading seed data into database..."
-python manage.py load_acu_data --file acu_data.json
+if [ "$LOAD_SEED_DATA" = "true" ]; then
+  echo "[5/7] Loading seed data into database..."
+  python manage.py load_acu_data --file acu_data.json
+else
+  echo "[5/7] Skipping seed data load."
+fi
 
-echo "[6/7] Waiting for Ollama..."
-until curl -s http://ollama:11434/api/tags > /dev/null 2>&1; do
-  sleep 3
-done
-echo "Ollama is ready!"
+if [ "$WAIT_FOR_OLLAMA" = "true" ]; then
+  echo "[6/7] Waiting for Ollama..."
+  until curl -s "$OLLAMA_URL/api/tags" > /dev/null 2>&1; do
+    sleep 3
+  done
+  echo "Ollama is ready!"
+else
+  echo "[6/7] Skipping Ollama wait."
+fi
 
-echo "[7/7] Pulling models (background)..."
-python manage.py pull_model &
+if [ "$PULL_MODELS_ON_START" = "true" ]; then
+  echo "[7/7] Pulling models (background)..."
+  python manage.py pull_model &
+else
+  echo "[7/7] Skipping model pull."
+fi
 
 echo "=== Starting Gunicorn on port 8000 ==="
 exec gunicorn config.wsgi:application \

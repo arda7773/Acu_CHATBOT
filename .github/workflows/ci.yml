@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: webapp
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Python syntax check
+        run: python -m compileall .
+
+      - name: Django manage.py check
+        env:
+          SECRET_KEY: ci-secret-key
+          DEBUG: "False"
+          ALLOWED_HOSTS: localhost,127.0.0.1
+          POSTGRES_DB: acuchatbot
+          POSTGRES_USER: acuuser
+          POSTGRES_PASSWORD: acupassword
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          WAIT_FOR_DB: "false"
+          WAIT_FOR_OLLAMA: "false"
+          LOAD_SEED_DATA: "false"
+          PULL_MODELS_ON_START: "false"
+        run: python manage.py check
+
+  docker-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build webapp image
+        run: docker build -t acu-chatbot-web ./webapp
