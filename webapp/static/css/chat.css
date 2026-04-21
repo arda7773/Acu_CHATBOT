@@ -448,8 +448,8 @@ body {
 .welcome-card {
     margin: auto;
     text-align: center;
-    max-width: 560px;
-    padding: 52px 44px;
+    max-width: 600px;
+    padding: 56px 44px 40px;
     background:
         linear-gradient(180deg, rgba(255,255,255,0.94), rgba(248,251,255,0.98)),
         var(--bg-elevated);
@@ -468,6 +468,43 @@ body {
     width: 100%;
     height: 6px;
     background: linear-gradient(90deg, var(--primary), var(--accent));
+}
+
+.welcome-card::after {
+    content: '';
+    position: absolute;
+    inset: auto -40px -60px auto;
+    width: 180px;
+    height: 180px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(186, 28, 46, 0.10), rgba(186, 28, 46, 0));
+    pointer-events: none;
+}
+
+.welcome-orbit {
+    position: absolute;
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.78);
+    box-shadow: 0 14px 30px rgba(26,58,107,0.10);
+    font-size: 20px;
+    z-index: 1;
+    animation: welcomeFloat 4.8s ease-in-out infinite;
+}
+
+.welcome-orbit-left {
+    top: 24px;
+    left: 24px;
+}
+
+.welcome-orbit-right {
+    top: 28px;
+    right: 26px;
+    animation-delay: 0.9s;
 }
 
 .welcome-eyebrow {
@@ -490,6 +527,16 @@ body {
     to   { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes welcomeFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+
+@keyframes chipEmojiBounce {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-3px) scale(1.08); }
+}
+
 .welcome-icon-wrap {
     width: 72px;
     height: 72px;
@@ -504,60 +551,92 @@ body {
     letter-spacing: 0.12em;
     color: white;
     box-shadow: 0 14px 32px rgba(26,58,107,0.24);
+    position: relative;
+    z-index: 1;
 }
 
 .welcome-card h2 {
     color: var(--primary);
-    font-size: 21px;
-    font-weight: 700;
+    font-size: 24px;
+    font-weight: 800;
     margin-bottom: 10px;
     line-height: 1.3;
+    position: relative;
+    z-index: 1;
 }
 
 .welcome-card p {
     color: var(--text-muted);
     font-size: 14px;
     line-height: 1.75;
-    margin-bottom: 18px;
+    margin-bottom: 20px;
+    position: relative;
+    z-index: 1;
 }
 
 .welcome-note {
     margin: 0 auto 28px;
-    max-width: 420px;
-    padding: 10px 14px;
-    border-radius: 14px;
-    background: rgba(23,51,92,0.05);
+    max-width: 430px;
+    padding: 12px 16px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(23,51,92,0.06), rgba(23,51,92,0.03));
     border: 1px solid rgba(23,51,92,0.08);
     color: var(--text-secondary);
     font-size: 12.5px;
     line-height: 1.6;
+    position: relative;
+    z-index: 1;
 }
 
 .welcome-chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 10px;
     justify-content: center;
+    position: relative;
+    z-index: 1;
 }
 
 .welcome-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     background: white;
     border: 1px solid rgba(23,51,92,0.10);
     border-radius: 999px;
-    padding: 9px 15px;
+    padding: 10px 16px;
     font-size: 12.5px;
     color: var(--text-secondary);
     cursor: pointer;
     transition: all var(--transition);
-    font-weight: 500;
+    font-weight: 600;
+    box-shadow: 0 10px 24px rgba(26,58,107,0.06);
+}
+
+.welcome-chip-emoji {
+    display: inline-block;
+    font-size: 15px;
+    animation: chipEmojiBounce 2.8s ease-in-out infinite;
+}
+
+.welcome-chip:nth-child(2) .welcome-chip-emoji {
+    animation-delay: 0.25s;
+}
+
+.welcome-chip:nth-child(3) .welcome-chip-emoji {
+    animation-delay: 0.5s;
+}
+
+.welcome-chip:nth-child(4) .welcome-chip-emoji {
+    animation-delay: 0.75s;
 }
 
 .welcome-chip:hover {
     background: var(--primary);
     border-color: var(--primary);
     color: white;
-    box-shadow: 0 4px 12px rgba(26,58,107,0.25);
-    transform: translateY(-1px);
+    box-shadow: 0 12px 24px rgba(26,58,107,0.22);
+    transform: translateY(-2px) scale(1.01);
 }
 
 /* ─── Date Divider ─── */

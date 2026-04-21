@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 import requests
 from django.conf import settings
@@ -17,7 +18,8 @@ ZORUNLU KURALLAR — İstisna Kabul Etmez:
 5. Liste soruları için bağlamdaki TÜM öğeleri eksiksiz listele.
 6. Bağlamda kısmi bilgi varsa "Elimdeki bilgilere göre..." diye başla ve neyi bilmediğini belirt.
 7. Türkçe yanıtta İngilizce kelime karıştırma, bozuk veya anlamsız cümle kurma.
-8. Sayılar, tarihler, isimler: YALNIZCA bağlamda geçen değerleri kullan, asla tahmin etme."""
+8. Sayılar, tarihler, isimler: YALNIZCA bağlamda geçen değerleri kullan, asla tahmin etme.
+9. Kullanıcı adresi, konumu veya "nerede/nerde" bilgisini soruyorsa ve bağlamda açık adres varsa, genel konum özeti verme; açık adresi aynen ve doğrudan yaz."""
 
 FALLBACK_ANSWER = (
     "Bu konuda elimde yeterli bilgi bulunmuyor. Daha fazla bilgi için "
@@ -76,12 +78,70 @@ def is_low_quality_answer(answer: str) -> bool:
     return any(pattern in lowered for pattern in bad_patterns)
 
 
+def _is_address_question(question: str) -> bool:
+    lowered = question.lower()
+    return any(term in lowered for term in (
+        'adres', 'address', 'nerede', 'nerde', 'konum', 'lokasyon',
+    ))
+
+
+def _extract_address_from_context(context: str) -> str:
+    lines = [line.strip() for line in context.splitlines() if line.strip()]
+
+    def line_score(line: str) -> int:
+        lowered = line.lower()
+        score = 0
+        if 'kampüs' in lowered or 'campus' in lowered:
+            score += 4
+        if 'caddesi' in lowered or 'cad.' in lowered or 'street' in lowered:
+            score += 3
+        if re.search(r'\bno[: ]\s*\d+', lowered):
+            score += 4
+        if '/' in line:
+            score += 2
+        if any(term in lowered for term in ('istanbul', 'ataşehir', 'kayışdağı')):
+            score += 3
+        return score
+
+    best_parts: list[str] = []
+    best_score = 0
+    for idx, line in enumerate(lines):
+        score = line_score(line)
+        if score <= 0:
+            continue
+
+        parts = [line]
+        total_score = score
+
+        previous = lines[idx - 1] if idx > 0 else ''
+        if previous and line_score(previous) >= 3:
+            parts.insert(0, previous)
+            total_score += line_score(previous)
+
+        next_line = lines[idx + 1] if idx + 1 < len(lines) else ''
+        if next_line and line_score(next_line) >= 2:
+            parts.append(next_line)
+            total_score += line_score(next_line)
+
+        if total_score > best_score:
+            best_score = total_score
+            best_parts = list(dict.fromkeys(parts))
+
+    if best_parts:
+        return ', '.join(best_parts)
+    return ''
+
+
 def get_answer(question: str, context: str) -> str:
     """
     Send a question with its retrieved context to Ollama and return the answer.
     """
     if not context or not context.strip():
         return FALLBACK_ANSWER
+
+    direct_address = _extract_address_from_context(context)
+    if _is_address_question(question) and direct_address:
+        return direct_address
 
     # Reject suspiciously short context — not enough to answer from
     if len(context.strip()) < 80:
@@ -128,6 +188,9 @@ TALİMATLAR:
         if is_low_quality_answer(answer):
             logger.warning("Low-quality model answer detected, returning fallback")
             return FALLBACK_ANSWER
+        if _is_address_question(question) and direct_address:
+            if 'anadolu yakasında' in answer.lower() or 'istanbul' in answer.lower():
+                return direct_address
         return answer
 
     except requests.Timeout:

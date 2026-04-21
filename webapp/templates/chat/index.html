@@ -111,6 +111,8 @@
             <div class="messages-area" id="messages-area">
                 {% if not messages %}
                 <div class="welcome-card" id="welcome-card">
+                    <div class="welcome-orbit welcome-orbit-left" aria-hidden="true">✨</div>
+                    <div class="welcome-orbit welcome-orbit-right" aria-hidden="true">🎓</div>
                     <div class="welcome-eyebrow">ACU Bilgi Asistanı</div>
                     <div class="welcome-icon-wrap">ACU</div>
                     <h2>Acıbadem Üniversitesi<br>AI Asistanı</h2>
@@ -120,10 +122,22 @@
                         Yanıtlar üniversite içerikleri ve taranmış akademik kaynaklar üzerinden oluşturulur.
                     </div>
                     <div class="welcome-chips">
-                        <button class="welcome-chip" data-q="Hangi bölümler mevcut?">Bölümler</button>
-                        <button class="welcome-chip" data-q="Kabul koşulları nelerdir?">Kabul Koşulları</button>
-                        <button class="welcome-chip" data-q="Kampüs hakkında bilgi ver">Kampüs</button>
-                        <button class="welcome-chip" data-q="Burs imkânları neler?">Burslar</button>
+                        <button class="welcome-chip" data-q="Hangi bölümler mevcut?">
+                            <span class="welcome-chip-emoji" aria-hidden="true">📚</span>
+                            <span>Bölümler</span>
+                        </button>
+                        <button class="welcome-chip" data-q="Kabul koşulları nelerdir?">
+                            <span class="welcome-chip-emoji" aria-hidden="true">✅</span>
+                            <span>Kabul Koşulları</span>
+                        </button>
+                        <button class="welcome-chip" data-q="Kampüs hakkında bilgi ver">
+                            <span class="welcome-chip-emoji" aria-hidden="true">🏫</span>
+                            <span>Kampüs</span>
+                        </button>
+                        <button class="welcome-chip" data-q="Burs imkânları neler?">
+                            <span class="welcome-chip-emoji" aria-hidden="true">💸</span>
+                            <span>Burslar</span>
+                        </button>
                     </div>
                 </div>
                 {% endif %}

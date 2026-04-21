@@ -2,6 +2,7 @@ import json
 import logging
 
 from django.conf import settings as django_settings
+from django.db.models import Max
 from django.shortcuts import render, redirect
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -20,9 +21,10 @@ def _get_recent_sessions(current_session_id=None):
     sessions = (
         ChatSession.objects
         .prefetch_related('messages')
+        .annotate(last_message_at=Max('messages__created_at'))
         .filter(messages__isnull=False)
         .distinct()
-        .order_by('-created_at')[:20]
+        .order_by('-last_message_at', '-created_at')[:20]
     )
     result = []
     for s in sessions:
@@ -32,6 +34,7 @@ def _get_recent_sessions(current_session_id=None):
             'title': (first_msg.question[:60] + '…') if first_msg and len(first_msg.question) > 60 else (first_msg.question if first_msg else 'Sohbet'),
             'active': str(s.id) == str(current_session_id),
             'created_at': s.created_at,
+            'last_message_at': s.last_message_at,
         })
     return result
 

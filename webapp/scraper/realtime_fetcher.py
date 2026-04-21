@@ -79,6 +79,12 @@ CONTACT_TERMS = {
     'adres', 'address', 'contact',
 }
 
+CANONICAL_CONTACT_URL = 'https://www.acibadem.edu.tr/iletisim'
+CONTACT_FALLBACK_URLS = (
+    'https://www.acibadem.edu.tr/iletisim',
+    'https://www.acibadem.edu.tr/en/contact',
+)
+
 EXCHANGE_TERMS = {
     'erasmus', 'erasmus+', 'exchange', 'değişim', 'degisim',
     'değişim programı', 'degisim programi', 'partner üniversite',
@@ -290,6 +296,121 @@ def _primary_faculty(question: str) -> str:
     for label, aliases in FACULTY_ALIASES.items():
         if any(_contains_fuzzy_phrase(normalized, alias, threshold=0.84) for alias in aliases):
             return label.lower()
+    return ''
+
+
+def _is_general_university_address_question(question: str) -> bool:
+    normalized = _ascii_fold(question)
+    if not any(term in normalized for term in ('adres', 'address', 'nerede', 'nerde', 'konum', 'lokasyon')):
+        return False
+
+    # Avoid overriding specific faculty/department/unit address requests.
+    if _primary_department(question) or _primary_faculty(question):
+        return False
+
+    unit_markers = (
+        'fakulte', 'bolum', 'enstitu', 'myo', 'ofis', 'ogrenci isleri',
+        'kutuphane', 'laboratuvar', 'dekanlik', 'rektorluk',
+    )
+    if any(marker in normalized for marker in unit_markers):
+        return False
+
+    university_markers = (
+        'acibadem universitesi', 'acibadem universite', 'universite', 'kampus',
+    )
+    return any(marker in normalized for marker in university_markers)
+
+
+def _address_line_score(line: str) -> int:
+    lowered = _ascii_fold(line)
+    score = 0
+    if 'kampus' in lowered or 'campus' in lowered:
+        score += 4
+    if 'cad' in lowered or 'caddesi' in lowered or 'street' in lowered:
+        score += 3
+    if 'no:' in lowered or 'no ' in lowered:
+        score += 3
+    if '/' in line:
+        score += 2
+    if any(city in lowered for city in ('istanbul', 'atasehir', 'kayisdagi')):
+        score += 3
+    if re.search(r'\bno[: ]\s*\d+', lowered):
+        score += 4
+    return score
+
+
+def _extract_address_block_from_text(text: str) -> str:
+    if not text:
+        return ''
+
+    raw_lines = [line.strip(' \t,;') for line in text.splitlines() if line.strip()]
+    if not raw_lines:
+        return ''
+
+    best_block = ''
+    best_score = 0
+    for idx, line in enumerate(raw_lines):
+        score = _address_line_score(line)
+        if score <= 0:
+            continue
+
+        block_lines = [line]
+        total_score = score
+
+        previous = raw_lines[idx - 1] if idx > 0 else ''
+        if previous and _address_line_score(previous) >= 3:
+            block_lines.insert(0, previous)
+            total_score += _address_line_score(previous)
+
+        for next_idx in range(idx + 1, min(idx + 3, len(raw_lines))):
+            next_line = raw_lines[next_idx]
+            next_score = _address_line_score(next_line)
+            if next_score < 2:
+                break
+            block_lines.append(next_line)
+            total_score += next_score
+
+        deduped_lines = list(dict.fromkeys(block_lines))
+        candidate = '\n'.join(deduped_lines)
+        if total_score > best_score:
+            best_score = total_score
+            best_block = candidate
+
+    return best_block
+
+
+def _fetch_live_university_address() -> str:
+    for url in CONTACT_FALLBACK_URLS:
+        try:
+            response = requests.get(url, timeout=15, headers=HEADERS)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logger.warning("Could not fetch contact page %s: %s", url, exc)
+            continue
+
+        soup = BeautifulSoup(response.content, 'html.parser')
+        text = soup.get_text('\n', strip=True)
+        address = _extract_address_block_from_text(text)
+        if address:
+            return address
+
+    return ''
+
+
+def _resolve_university_address() -> str:
+    live_address = _fetch_live_university_address()
+    if live_address:
+        return live_address
+
+    for result in _curated_scraped_fallback(INTENT_CONTACT, max_results=3):
+        address = _extract_address_block_from_text(result['text'])
+        if address:
+            return address
+
+    page = _load_or_scrape_page(CANONICAL_CONTACT_URL)
+    if page:
+        return _extract_address_block_from_text(page.text)
+
     return ''
 
 
@@ -570,7 +691,8 @@ _QUERY_EXPANSIONS: dict[str, list[str]] = {
     ],
     INTENT_CONTACT: [
         'iletişim bilgileri', 'telefon numarası', 'e-posta adresi',
-        'ofis adresi', 'nasıl ulaşılır',
+        'ofis adresi', 'nasıl ulaşılır', 'kampüs adresi',
+        'kayışdağı', 'ataşehir', 'kerem aydınlar kampüsü',
     ],
     INTENT_ANNOUNCEMENT: [
         'son haberler', 'güncel duyurular', 'etkinlikler', 'akademik takvim',
@@ -1497,14 +1619,20 @@ def _curated_scraped_fallback(intent: str, max_results: int = 3) -> list[dict]:
         reverse=True,
     )
 
-    return [
-        {
+    results = []
+    for p in ranked_pages[:max_results]:
+        kws = extract_keywords(p.title + ' ' + p.url)
+        if intent == INTENT_CONTACT:
+            kws = list(dict.fromkeys(kws + [
+                'adres', 'kayışdağı', 'ataşehir', 'kampüs', 'no:32',
+                'telefon', 'iletişim', 'e-posta',
+            ]))
+        results.append({
             'url': p.url,
             'title': p.title,
-            'text': extract_relevant_snippet(p.text, extract_keywords(p.title + ' ' + p.url), max_chars=2200),
-        }
-        for p in ranked_pages[:max_results]
-    ]
+            'text': extract_relevant_snippet(p.text, kws, max_chars=2200),
+        })
+    return results
 
 
 def _supplement_semantic_candidates(question: str, intent: str) -> list[dict]:
@@ -1725,6 +1853,10 @@ def _intent_metadata_boost(chunk: dict, intent: str) -> float:
         boost += 0.25
     if intent == INTENT_CONTACT and page_type == 'contact':
         boost += 0.30
+    if intent == INTENT_CONTACT:
+        text_lower = chunk.get('text', '').lower()
+        if any(kw in text_lower for kw in ('kayışdağı', 'kayisdagi', 'ataşehir', 'atasehir', 'no:32')):
+            boost += 0.40
     if intent == INTENT_ADMISSION and page_type == 'admission':
         boost += 0.25
     if intent == INTENT_EXCHANGE and page_type == 'exchange':
@@ -1872,6 +2004,20 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
         f"keywords={keywords} entities={entities}"
     )
 
+    if _is_general_university_address_question(question):
+        logger.info("[RETRIEVAL] canonical university address lookup")
+        address = _resolve_university_address()
+        if address:
+            context_parts.append(f"=== Acıbadem Üniversitesi Adres ===\n{address}")
+            sources.append(CANONICAL_CONTACT_URL)
+        for result in _curated_scraped_fallback(INTENT_CONTACT, max_results=2):
+            if result['url'] in sources:
+                continue
+            context_parts.append(f"=== {result['title']} ===\n{result['text']}")
+            sources.append(result['url'])
+        if context_parts:
+            return '\n\n'.join(context_parts), sources
+
     if is_head_question(question) and target_department:
         logger.info("[RETRIEVAL] targeted head lookup for department=%s", target_department)
         for result in search_scraped_pages(question, max_results=3):
@@ -1899,6 +2045,17 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
     if intent == INTENT_STAFF and target_department:
         logger.info("[RETRIEVAL] targeted staff lookup for department=%s", target_department)
         for result in search_scraped_pages(question, max_results=3):
+            if result['url'] in sources:
+                continue
+            context_parts.append(f"=== {result['title']} ===\n{result['text']}")
+            sources.append(result['url'])
+        if context_parts:
+            return '\n\n'.join(context_parts), sources
+
+    if intent == INTENT_CONTACT:
+        logger.info("[RETRIEVAL] targeted contact/address lookup")
+        contact_results = _curated_scraped_fallback(INTENT_CONTACT, max_results=3)
+        for result in contact_results:
             if result['url'] in sources:
                 continue
             context_parts.append(f"=== {result['title']} ===\n{result['text']}")
