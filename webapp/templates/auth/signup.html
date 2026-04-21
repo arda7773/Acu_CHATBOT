@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kayıt Ol | ACU AI Asistan</title>
+    {% load static %}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/auth.css' %}">
+</head>
+<body>
+    <main class="auth-shell">
+        <section class="auth-card">
+            <div class="auth-brand">ACU</div>
+            <p class="auth-eyebrow">ACU AI Asistan</p>
+            <h1>Yeni hesap oluşturun</h1>
+            <p class="auth-copy">Kayıt olduktan sonra sohbet geçmişiniz size özel tutulur.</p>
+
+            <form method="post" class="auth-form">
+                {% csrf_token %}
+                {{ form.non_field_errors }}
+                <label class="auth-label" for="{{ form.username.id_for_label }}">Kullanıcı adı</label>
+                {{ form.username }}
+                {{ form.username.errors }}
+                <label class="auth-label" for="{{ form.password1.id_for_label }}">Şifre</label>
+                {{ form.password1 }}
+                {{ form.password1.errors }}
+                <label class="auth-label" for="{{ form.password2.id_for_label }}">Şifre tekrar</label>
+                {{ form.password2 }}
+                {{ form.password2.errors }}
+                <button type="submit" class="auth-submit">Kayıt Ol</button>
+            </form>
+
+            <p class="auth-switch">Zaten hesabınız var mı? <a href="{% url 'login' %}">Giriş yapın</a></p>
+        </section>
+    </main>
+</body>
+</html>

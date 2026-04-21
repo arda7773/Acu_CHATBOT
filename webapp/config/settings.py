@@ -22,7 +22,7 @@ def _database_config() -> dict[str, str]:
     if database_url:
         parsed = urlparse(database_url)
         return {
-            'ENGINE': 'django.db.backends.postgresql',
+            'ENGINE': 'django_prometheus.db.backends.postgresql',
             'NAME': (parsed.path or '/acuchatbot').lstrip('/'),
             'USER': parsed.username or '',
             'PASSWORD': parsed.password or '',
@@ -31,7 +31,7 @@ def _database_config() -> dict[str, str]:
         }
 
     return {
-        'ENGINE': 'django.db.backends.postgresql',
+        'ENGINE': 'django_prometheus.db.backends.postgresql',
         'NAME': os.environ.get('POSTGRES_DB', 'acuchatbot'),
         'USER': os.environ.get('POSTGRES_USER', 'acuuser'),
         'PASSWORD': os.environ.get('POSTGRES_PASSWORD', 'acupassword'),
@@ -48,6 +48,7 @@ if not ALLOWED_HOSTS:
 CSRF_TRUSTED_ORIGINS = _parse_csv_env(os.environ.get('CSRF_TRUSTED_ORIGINS'))
 
 INSTALLED_APPS = [
+    'django_prometheus',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -59,6 +60,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'django_prometheus.middleware.PrometheusBeforeMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -67,6 +69,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -118,6 +121,9 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_SSL_REDIRECT = _parse_bool(os.environ.get('SECURE_SSL_REDIRECT'), default=not DEBUG)
+LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = '/login/'
 
 # Ollama settings
 OLLAMA_URL = os.environ.get('OLLAMA_URL', 'http://ollama:11434')

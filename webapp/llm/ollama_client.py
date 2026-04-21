@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from collections.abc import Iterator
 
 import requests
 from django.conf import settings
@@ -214,3 +215,93 @@ TALİMATLAR:
     except (KeyError, json.JSONDecodeError) as e:
         logger.error(f"Unexpected Ollama response format: {e}")
         return "Üzgünüm, beklenmeyen bir hata oluştu. Lütfen tekrar deneyin."
+
+
+def stream_answer(question: str, context: str) -> Iterator[str]:
+    """
+    Stream the answer from Ollama in small text chunks.
+    """
+    if not context or not context.strip():
+        yield FALLBACK_ANSWER
+        return
+
+    direct_address = _extract_address_from_context(context)
+    if _is_address_question(question) and direct_address:
+        yield direct_address
+        return
+
+    if len(context.strip()) < 80:
+        logger.warning("Context too short to be useful, streaming fallback")
+        yield FALLBACK_ANSWER
+        return
+
+    user_message = f"""Aşağıdaki BAĞLAM, Acıbadem Üniversitesi veri tabanından alınan ilgili bilgi parçalarını içermektedir.
+
+=== BAĞLAM BAŞLANGICI ===
+{context}
+=== BAĞLAM SONU ===
+
+Kullanıcının sorusu: {question}
+
+TALİMATLAR:
+- Cevabını YALNIZCA yukarıdaki BAĞLAM içindeki bilgilere dayandır.
+- Bağlamda bulunmayan hiçbir bilgiyi ekleme veya tahmin etme.
+- Bağlamda bu soruya cevap yoksa SADECE şunu yaz:
+{FALLBACK_ANSWER}"""
+
+    payload = {
+        "model": settings.OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        "stream": True,
+        "options": {
+            "temperature": 0.1,
+            "num_predict": 600,
+            "top_p": 0.9,
+        },
+    }
+
+    full_answer: list[str] = []
+    try:
+        response = requests.post(
+            f'{settings.OLLAMA_URL}/api/chat',
+            json=payload,
+            timeout=240,
+            stream=True,
+        )
+        response.raise_for_status()
+
+        for line in response.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning("Skipping malformed Ollama stream chunk")
+                continue
+
+            piece = (data.get('message') or {}).get('content') or ''
+            if not piece:
+                continue
+            full_answer.append(piece)
+            yield piece
+
+        answer = ''.join(full_answer).strip()
+        if not answer:
+            yield FALLBACK_ANSWER
+            return
+        if is_low_quality_answer(answer):
+            logger.warning("Low-quality streamed model answer detected, streaming fallback")
+            yield f"\n{FALLBACK_ANSWER}"
+            return
+    except requests.Timeout:
+        logger.error("Ollama streaming request timed out")
+        yield "Üzgünüm, yapay zeka servisi şu an yanıt vermiyor. Lütfen birkaç saniye bekleyip tekrar deneyin."
+    except requests.ConnectionError:
+        logger.error("Could not connect to Ollama service while streaming")
+        yield "Üzgünüm, yapay zeka servisine bağlanılamıyor. Servisin çalışıp çalışmadığını kontrol edin."
+    except requests.RequestException as e:
+        logger.error(f"Ollama streaming request failed: {e}")
+        yield "Üzgünüm, bir hata oluştu. Lütfen tekrar deneyin."

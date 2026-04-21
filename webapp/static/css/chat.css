@@ -406,6 +406,42 @@ body {
     flex-shrink: 0;
 }
 
+.user-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px 5px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.78);
+}
+
+.user-badge-name {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.logout-btn {
+    border: none;
+    border-radius: 999px;
+    padding: 6px 10px;
+    background: rgba(23,51,92,0.08);
+    color: var(--primary);
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.logout-btn:hover {
+    background: rgba(23,51,92,0.14);
+}
+
 .model-badge {
     display: inline-flex;
     align-items: center;
@@ -1089,6 +1125,14 @@ textarea::placeholder { color: #9ca3af; }
 
     .model-badge {
         display: none;
+    }
+
+    .user-badge {
+        padding-right: 10px;
+    }
+
+    .user-badge-name {
+        max-width: 92px;
     }
 
     .scroll-btn {

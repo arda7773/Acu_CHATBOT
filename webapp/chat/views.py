@@ -1,27 +1,31 @@
 import json
 import logging
 
+from django.contrib.auth import login, logout
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.conf import settings as django_settings
 from django.db.models import Max
 from django.shortcuts import render, redirect
-from django.http import JsonResponse
+from django.http import JsonResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.urls import reverse
 
 from .models import ChatSession, ChatMessage
 from scraper.realtime_fetcher import get_context_for_question
-from llm.ollama_client import get_answer
+from llm.ollama_client import get_answer, stream_answer
 
 logger = logging.getLogger(__name__)
 
 
-def _get_recent_sessions(current_session_id=None):
+def _get_recent_sessions(user, current_session_id=None):
     """Return last 20 sessions that have at least one message."""
     sessions = (
         ChatSession.objects
         .prefetch_related('messages')
         .annotate(last_message_at=Max('messages__created_at'))
+        .filter(owner=user)
         .filter(messages__isnull=False)
         .distinct()
         .order_by('-last_message_at', '-created_at')[:20]
@@ -39,21 +43,66 @@ def _get_recent_sessions(current_session_id=None):
     return result
 
 
-def chat_view(request, session_id=None):
+def _create_user_session(request):
+    session = ChatSession.objects.create(owner=request.user)
+    request.session['chat_session_id'] = str(session.id)
+    return session
+
+
+def _get_user_session(request, session_id=None):
     if session_id:
-        # Navigating to a specific session via URL
-        session, _ = ChatSession.objects.get_or_create(id=session_id)
-        request.session['chat_session_id'] = str(session.id)
-    else:
-        sid = request.session.get('chat_session_id')
-        if sid:
-            session, _ = ChatSession.objects.get_or_create(id=sid)
-        else:
-            session = ChatSession.objects.create()
+        session = ChatSession.objects.filter(id=session_id, owner=request.user).first()
+        if session:
             request.session['chat_session_id'] = str(session.id)
+            return session
+        return _create_user_session(request)
+
+    sid = request.session.get('chat_session_id')
+    if sid:
+        session = ChatSession.objects.filter(id=sid, owner=request.user).first()
+        if session:
+            return session
+
+    return _create_user_session(request)
+
+
+def login_view(request):
+    if request.user.is_authenticated:
+        return redirect('chat')
+
+    form = AuthenticationForm(request, data=request.POST or None)
+    if request.method == 'POST' and form.is_valid():
+        login(request, form.get_user())
+        return redirect(request.POST.get('next') or request.GET.get('next') or reverse('chat'))
+
+    return render(request, 'auth/login.html', {'form': form})
+
+
+def signup_view(request):
+    if request.user.is_authenticated:
+        return redirect('chat')
+
+    form = UserCreationForm(request.POST or None)
+    if request.method == 'POST' and form.is_valid():
+        user = form.save()
+        login(request, user)
+        return redirect('chat')
+
+    return render(request, 'auth/signup.html', {'form': form})
+
+
+@require_http_methods(["POST"])
+def logout_view(request):
+    logout(request)
+    return redirect('login')
+
+
+@login_required
+def chat_view(request, session_id=None):
+    session = _get_user_session(request, session_id=session_id)
 
     messages = session.messages.all()
-    recent_sessions = _get_recent_sessions(session.id)
+    recent_sessions = _get_recent_sessions(request.user, session.id)
 
     return render(request, 'chat/index.html', {
         'messages': messages,
@@ -65,6 +114,7 @@ def chat_view(request, session_id=None):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required
 def chat_api(request):
     try:
         data = json.loads(request.body)
@@ -78,10 +128,11 @@ def chat_api(request):
             return JsonResponse({'error': 'Soru çok uzun (max 1000 karakter).'}, status=400)
 
         if session_id:
-            session, _ = ChatSession.objects.get_or_create(id=session_id)
+            session = ChatSession.objects.filter(id=session_id, owner=request.user).first()
+            if not session:
+                session = _create_user_session(request)
         else:
-            session = ChatSession.objects.create()
-            request.session['chat_session_id'] = str(session.id)
+            session = _create_user_session(request)
 
         context, sources = get_context_for_question(question)
         answer = get_answer(question, context)
@@ -107,18 +158,81 @@ def chat_api(request):
         return JsonResponse({'error': 'Bir hata oluştu. Lütfen tekrar deneyin.'}, status=500)
 
 
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def chat_api_stream(request):
+    try:
+        data = json.loads(request.body)
+        question = data.get('question', '').strip()
+        session_id = data.get('session_id') or request.session.get('chat_session_id')
+
+        if not question:
+            return JsonResponse({'error': 'Soru boş olamaz.'}, status=400)
+
+        if len(question) > 1000:
+            return JsonResponse({'error': 'Soru çok uzun (max 1000 karakter).'}, status=400)
+
+        if session_id:
+            session = ChatSession.objects.filter(id=session_id, owner=request.user).first()
+            if not session:
+                session = _create_user_session(request)
+        else:
+            session = _create_user_session(request)
+
+        context, sources = get_context_for_question(question)
+
+        def event_stream():
+            full_answer: list[str] = []
+            try:
+                for piece in stream_answer(question, context):
+                    full_answer.append(piece)
+                    payload = json.dumps({'text': piece})
+                    yield f"event: chunk\ndata: {payload}\n\n"
+
+                answer = ''.join(full_answer).strip()
+                message = ChatMessage.objects.create(
+                    session=session,
+                    question=question,
+                    answer=answer,
+                    sources=sources,
+                )
+                done_payload = json.dumps({
+                    'answer': answer,
+                    'sources': sources,
+                    'session_id': str(session.id),
+                    'message_id': message.id,
+                })
+                yield f"event: done\ndata: {done_payload}\n\n"
+            except Exception as exc:
+                logger.error("Streaming chat API error: %s", exc, exc_info=True)
+                error_payload = json.dumps({'error': 'Bir hata oluştu. Lütfen tekrar deneyin.'})
+                yield f"event: error\ndata: {error_payload}\n\n"
+
+        response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
+        response['Cache-Control'] = 'no-cache'
+        response['X-Accel-Buffering'] = 'no'
+        return response
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Geçersiz istek formatı.'}, status=400)
+    except Exception as e:
+        logger.error(f"Streaming chat API setup error: {e}", exc_info=True)
+        return JsonResponse({'error': 'Bir hata oluştu. Lütfen tekrar deneyin.'}, status=500)
+
+
+@login_required
 def new_session(request):
-    session = ChatSession.objects.create()
-    request.session['chat_session_id'] = str(session.id)
+    session = _create_user_session(request)
     return redirect('chat')
 
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required
 def delete_session(request, session_id):
     try:
         current_session_id = request.session.get('chat_session_id')
-        session = ChatSession.objects.filter(id=session_id).first()
+        session = ChatSession.objects.filter(id=session_id, owner=request.user).first()
         if not session:
             return JsonResponse({'error': 'Sohbet bulunamadı.'}, status=404)
 
@@ -127,8 +241,7 @@ def delete_session(request, session_id):
 
         response = {'success': True, 'deleted_session_id': str(session_id)}
         if is_active:
-            new_session = ChatSession.objects.create()
-            request.session['chat_session_id'] = str(new_session.id)
+            new_session = _create_user_session(request)
             response['redirect_url'] = reverse('chat')
             response['new_session_id'] = str(new_session.id)
 

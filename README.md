@@ -10,6 +10,9 @@ The system uses:
 - Docker Compose for orchestration
 - GitHub Actions for CI
 - Render blueprint config for cloud deployment
+- Nginx reverse proxy for optional deployment enhancement
+- Streaming chat responses
+- Prometheus + Grafana monitoring stack
 
 ## Features
 
@@ -51,6 +54,9 @@ The project runs as separate containers:
 - `db`: PostgreSQL database with `pgvector`
 - `ollama`: local LLM service
 - `selenium`: browser automation service for dynamic page scraping
+- `nginx`: optional reverse proxy in front of Django
+- `prometheus`: metrics collection service
+- `grafana`: monitoring dashboard service
 
 Typical flow:
 
@@ -102,6 +108,9 @@ This starts:
 The app will be available at:
 
 - `http://localhost:8000`
+- `http://localhost:8080` through Nginx reverse proxy
+- `http://localhost:9090` for Prometheus
+- `http://localhost:3000` for Grafana
 
 Admin panel:
 
@@ -143,6 +152,8 @@ Important notes:
 - Render deployment is configured as deploy-ready infrastructure, not as a guaranteed production-tuned setup.
 - Ollama and Selenium on cloud instances can require more memory / paid plans than a free environment allows.
 - The web service uses environment variables like `DATABASE_URL`, `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, `OLLAMA_URL`, and `SELENIUM_URL`.
+- This means the repository is deployment-ready even if a live cloud deployment is not executed.
+- The included documentation and config are intended to demonstrate how the project can be deployed to a cloud provider.
 
 ### Deploy on Render
 
@@ -160,6 +171,17 @@ PULL_MODELS_ON_START=false
 ```
 
 You can then run data loading / model pulling manually after deployment.
+
+### Deployment-Ready Status
+
+This repository includes cloud deployment preparation in the following form:
+
+- a Render blueprint file (`render.yaml`)
+- production-aware Django environment handling
+- documented deployment environment variables
+- CI checks that validate the project before deployment
+
+Because the system includes resource-heavy services such as Ollama and Selenium, a live public deployment was treated as optional infrastructure work rather than a required runtime step. The repository is therefore prepared for deployment and documented accordingly, even when no live cloud instance is currently running.
 
 ## First-Time Data Preparation
 
@@ -281,6 +303,10 @@ Implemented:
 - Responsive chat UI
 - GitHub Actions CI workflow
 - Render deployment blueprint
+- Nginx reverse proxy configuration via Docker Compose
+- User authentication
+- Streaming chat responses from the local LLM
+- Monitoring stack with Prometheus and Grafana
 
 Still expected separately from this repository:
 

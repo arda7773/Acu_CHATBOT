@@ -96,6 +96,13 @@
                     </div>
                 </div>
                 <div class="topbar-right">
+                    <div class="user-badge">
+                        <span class="user-badge-name">{{ request.user.username }}</span>
+                        <form method="post" action="{% url 'logout' %}">
+                            {% csrf_token %}
+                            <button type="submit" class="logout-btn">Çıkış</button>
+                        </form>
+                    </div>
                     <div class="model-badge">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M12 2L2 7l10 5 10-5-10-5z"/>
@@ -242,6 +249,7 @@
         /* ─── Constants ─── */
         const SESSION_ID = "{{ session_id }}";
         const API_URL    = "{% url 'chat_api' %}";
+        const API_STREAM_URL = "{% url 'chat_api_stream' %}";
 
         /* ─── Elements ─── */
         const messagesArea    = document.getElementById('messages-area');
@@ -474,6 +482,34 @@
             messagesArea.appendChild(wrapper);
 
             if (isNearBottom()) scrollToBottom();
+            return { wrapper, bubble, textEl, footer };
+        }
+
+        function attachSources(bubble, sources = []) {
+            if (!sources.length) return;
+
+            const existing = bubble.querySelector('.sources-area');
+            if (existing) existing.remove();
+
+            const srcArea = document.createElement('div');
+            srcArea.className = 'sources-area';
+            const label = document.createElement('span');
+            label.className = 'sources-label';
+            label.textContent = 'Kaynaklar';
+            srcArea.appendChild(label);
+            sources.forEach(src => {
+                const a = document.createElement('a');
+                a.href = src;
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+                a.className = 'source-link';
+                a.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
+                a.appendChild(document.createTextNode(src.length > 70 ? src.substring(0, 70) + '…' : src));
+                srcArea.appendChild(a);
+            });
+
+            const footer = bubble.querySelector('.message-footer');
+            bubble.insertBefore(srcArea, footer);
         }
 
         /* ─── Send message ─── */
@@ -492,22 +528,61 @@
             if (isNearBottom()) scrollToBottom();
 
             try {
-                const response = await fetch(API_URL, {
+                const response = await fetch(API_STREAM_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ question, session_id: SESSION_ID }),
                 });
 
-                typingIndicator.classList.remove('visible');
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    appendMessage('bot', data.answer, data.sources || []);
-                    setStatus('ready');
-                } else {
+                if (!response.ok || !response.body) {
+                    typingIndicator.classList.remove('visible');
+                    const data = await response.json();
                     appendMessage('bot', data.error || 'Bir hata oluştu. Lütfen tekrar deneyin.');
                     setStatus('error');
+                    scrollToBottom();
+                    return;
+                }
+
+                const botMessage = appendMessage('bot', '');
+                typingIndicator.classList.remove('visible');
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let hasError = false;
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const events = buffer.split('\n\n');
+                    buffer = events.pop() || '';
+
+                    for (const rawEvent of events) {
+                        const lines = rawEvent.split('\n');
+                        const eventName = lines.find(line => line.startsWith('event:'))?.slice(6).trim() || 'message';
+                        const dataLine = lines.find(line => line.startsWith('data:'));
+                        if (!dataLine) continue;
+
+                        const payload = JSON.parse(dataLine.slice(5).trim());
+                        if (eventName === 'chunk') {
+                            botMessage.textEl.textContent += payload.text || '';
+                            if (isNearBottom()) scrollToBottom();
+                        } else if (eventName === 'done') {
+                            botMessage.textEl.textContent = payload.answer || botMessage.textEl.textContent;
+                            attachSources(botMessage.bubble, payload.sources || []);
+                            setStatus('ready');
+                        } else if (eventName === 'error') {
+                            botMessage.textEl.textContent = payload.error || 'Bir hata oluştu. Lütfen tekrar deneyin.';
+                            setStatus('error');
+                            hasError = true;
+                        }
+                    }
+                }
+
+                if (!hasError && statusText.textContent !== 'Hazır') {
+                    setStatus('ready');
                 }
             } catch (err) {
                 typingIndicator.classList.remove('visible');

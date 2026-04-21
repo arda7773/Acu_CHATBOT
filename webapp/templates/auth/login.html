@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Giriş Yap | ACU AI Asistan</title>
+    {% load static %}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/auth.css' %}">
+</head>
+<body>
+    <main class="auth-shell">
+        <section class="auth-card">
+            <div class="auth-brand">ACU</div>
+            <p class="auth-eyebrow">ACU AI Asistan</p>
+            <h1>Hesabınıza giriş yapın</h1>
+            <p class="auth-copy">Sohbet geçmişinize erişmek ve kendi oturumlarınızı yönetmek için giriş yapın.</p>
+
+            <form method="post" class="auth-form">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.GET.next }}">
+                {{ form.non_field_errors }}
+                <label class="auth-label" for="{{ form.username.id_for_label }}">Kullanıcı adı</label>
+                {{ form.username }}
+                {{ form.username.errors }}
+                <label class="auth-label" for="{{ form.password.id_for_label }}">Şifre</label>
+                {{ form.password }}
+                {{ form.password.errors }}
+                <button type="submit" class="auth-submit">Giriş Yap</button>
+            </form>
+
+            <p class="auth-switch">Hesabınız yok mu? <a href="{% url 'signup' %}">Kayıt olun</a></p>
+        </section>
+    </main>
+</body>
+</html>
