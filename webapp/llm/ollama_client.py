@@ -20,7 +20,8 @@ ZORUNLU KURALLAR — İstisna Kabul Etmez:
 6. Bağlamda kısmi bilgi varsa "Elimdeki bilgilere göre..." diye başla ve neyi bilmediğini belirt.
 7. Türkçe yanıtta İngilizce kelime karıştırma, bozuk veya anlamsız cümle kurma.
 8. Sayılar, tarihler, isimler: YALNIZCA bağlamda geçen değerleri kullan, asla tahmin etme.
-9. Kullanıcı adresi, konumu veya "nerede/nerde" bilgisini soruyorsa ve bağlamda açık adres varsa, genel konum özeti verme; açık adresi aynen ve doğrudan yaz."""
+9. Kullanıcı adresi, konumu veya "nerede/nerde" bilgisini soruyorsa ve bağlamda açık adres varsa, genel konum özeti verme; açık adresi aynen ve doğrudan yaz.
+10. Kullanıcı ulaşım, servis, metro, otobüs veya kampüse nasıl gidileceğini soruyorsa; bağlamda geçen ulaşım türlerini, servis saatini, güzergah/adım bilgisini ve açık adresi TEK yanıtta eksiksiz ver. Kısa özet yapıp madde atlama."""
 
 FALLBACK_ANSWER = (
     "Bu konuda elimde yeterli bilgi bulunmuyor. Daha fazla bilgi için "

@@ -589,6 +589,14 @@ def is_campus_question(text: str) -> bool:
     return detect_intent(text) == INTENT_CAMPUS
 
 
+def _is_transport_question(text: str) -> bool:
+    lowered = _ascii_fold(text)
+    return any(term in lowered for term in (
+        'ulasim', 'ulasim nasil', 'nasil gidilir', 'nasıl gidilir',
+        'metro', 'otobus', 'otobüs', 'servis', 'shuttle', 'transport',
+    ))
+
+
 # ===========================================================================
 # URL STABILITY CLASSIFIER
 # Scores URLs as stable/factual (+) or noisy/promotional (-)
@@ -1635,6 +1643,46 @@ def _curated_scraped_fallback(intent: str, max_results: int = 3) -> list[dict]:
     return results
 
 
+def _search_transport_pages(max_results: int = 3) -> list[dict]:
+    from scraper.models import ScrapedPage
+
+    query = (
+        Q(url__icontains='ulasim') |
+        Q(url__icontains='transport') |
+        Q(title__icontains='Ulaşım') |
+        Q(title__icontains='Transportation') |
+        Q(title__icontains='Transport')
+    )
+
+    pages = list(
+        ScrapedPage.objects.filter(query)
+        .exclude(url__icontains='/etkinlikler/')
+        .exclude(url__icontains='/duyurular/')
+        .exclude(url__icontains='/haberler/')[:20]
+    )
+
+    keywords = [
+        'ulaşım', 'ulasim', 'transport', 'transportation',
+        'metro', 'kozyatağı', 'kozyatagi', 'otobüs', 'otobus',
+        'servis', 'shuttle', 'araç', 'car', 'adres', 'kayışdağı',
+        'kayisdagi', 'ataşehir', 'atasehir', 'no:32',
+    ]
+    ranked_pages = sorted(
+        pages,
+        key=lambda page: score_page_relevance(page.title + ' ' + page.url, page, keywords),
+        reverse=True,
+    )
+
+    results = []
+    for page in ranked_pages[:max_results]:
+        results.append({
+            'url': page.url,
+            'title': page.title,
+            'text': extract_relevant_snippet(page.text, keywords, max_chars=2600),
+        })
+    return results
+
+
 def _supplement_semantic_candidates(question: str, intent: str) -> list[dict]:
     candidates: list[dict] = []
 
@@ -2011,6 +2059,20 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
             context_parts.append(f"=== Acıbadem Üniversitesi Adres ===\n{address}")
             sources.append(CANONICAL_CONTACT_URL)
         for result in _curated_scraped_fallback(INTENT_CONTACT, max_results=2):
+            if result['url'] in sources:
+                continue
+            context_parts.append(f"=== {result['title']} ===\n{result['text']}")
+            sources.append(result['url'])
+        if context_parts:
+            return '\n\n'.join(context_parts), sources
+
+    if _is_transport_question(question):
+        logger.info("[RETRIEVAL] targeted transport lookup")
+        address = _resolve_university_address()
+        if address:
+            context_parts.append(f"=== Acıbadem Üniversitesi Adres ===\n{address}")
+            sources.append(CANONICAL_CONTACT_URL)
+        for result in _search_transport_pages(max_results=3):
             if result['url'] in sources:
                 continue
             context_parts.append(f"=== {result['title']} ===\n{result['text']}")
