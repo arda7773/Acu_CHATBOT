@@ -803,6 +803,12 @@ body {
     gap: 8px;
 }
 
+.message-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
 .message-time {
     font-size: 10.5px;
     color: var(--text-muted);
@@ -829,20 +835,40 @@ body {
     pointer-events: none;
 }
 
-.message-bubble:hover .copy-btn {
+.edit-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: none;
+    border: none;
+    padding: 3px 7px;
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition);
+    opacity: 0;
+    pointer-events: none;
+}
+
+.message-bubble:hover .copy-btn,
+.message-bubble:hover .edit-btn {
     opacity: 1;
     pointer-events: auto;
 }
 
+.edit-btn:hover,
 .copy-btn:hover {
     background: var(--bg);
     color: var(--text);
 }
 
+.user-bubble .edit-btn,
 .user-bubble .copy-btn {
     color: rgba(255,255,255,0.6);
 }
 
+.user-bubble .edit-btn:hover,
 .user-bubble .copy-btn:hover {
     background: rgba(255,255,255,0.15);
     color: white;
@@ -967,6 +993,58 @@ body {
     backdrop-filter: blur(14px);
     border-top: 1px solid rgba(215,224,235,0.8);
     flex-shrink: 0;
+}
+
+.edit-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+    padding: 10px 14px;
+    border-radius: 16px;
+    background: rgba(23,51,92,0.06);
+    border: 1px solid rgba(23,51,92,0.10);
+}
+
+.edit-banner-copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 2px;
+}
+
+.edit-banner-label {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--primary);
+}
+
+.edit-banner-text {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.edit-cancel-btn {
+    border: none;
+    border-radius: 999px;
+    padding: 8px 12px;
+    background: rgba(23,51,92,0.10);
+    color: var(--primary);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.edit-cancel-btn:hover {
+    background: rgba(23,51,92,0.16);
 }
 
 .input-container {

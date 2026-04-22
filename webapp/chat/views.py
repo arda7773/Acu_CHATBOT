@@ -49,6 +49,15 @@ def _create_user_session(request):
     return session
 
 
+def _resolve_session_for_request(request, session_id=None):
+    if session_id:
+        session = ChatSession.objects.filter(id=session_id, owner=request.user).first()
+        if session:
+            request.session['chat_session_id'] = str(session.id)
+            return session
+    return _create_user_session(request)
+
+
 def _get_user_session(request, session_id=None):
     if session_id:
         session = ChatSession.objects.filter(id=session_id, owner=request.user).first()
@@ -64,6 +73,64 @@ def _get_user_session(request, session_id=None):
             return session
 
     return _create_user_session(request)
+
+
+def _validate_question(question: str):
+    if not question:
+        return JsonResponse({'error': 'Soru boş olamaz.'}, status=400)
+    if len(question) > 1000:
+        return JsonResponse({'error': 'Soru çok uzun (max 1000 karakter).'}, status=400)
+    return None
+
+
+def _serialize_done_payload(session, message):
+    return {
+        'answer': message.answer,
+        'sources': message.sources,
+        'session_id': str(session.id),
+        'message_id': message.id,
+    }
+
+
+def _stream_message_answer(session, question: str, *, message: ChatMessage | None = None, deleted_message_ids: list[int] | None = None):
+    context, sources = get_context_for_question(question)
+
+    def event_stream():
+        full_answer: list[str] = []
+        try:
+            for piece in stream_answer(question, context):
+                full_answer.append(piece)
+                payload = json.dumps({'text': piece})
+                yield f"event: chunk\ndata: {payload}\n\n"
+
+            answer = ''.join(full_answer).strip()
+            if message is None:
+                saved_message = ChatMessage.objects.create(
+                    session=session,
+                    question=question,
+                    answer=answer,
+                    sources=sources,
+                )
+            else:
+                message.question = question
+                message.answer = answer
+                message.sources = sources
+                message.save(update_fields=['question', 'answer', 'sources'])
+                saved_message = message
+
+            done_payload = _serialize_done_payload(session, saved_message)
+            if deleted_message_ids:
+                done_payload['deleted_message_ids'] = deleted_message_ids
+            yield f"event: done\ndata: {json.dumps(done_payload)}\n\n"
+        except Exception as exc:
+            logger.error("Streaming chat API error: %s", exc, exc_info=True)
+            error_payload = json.dumps({'error': 'Bir hata oluştu. Lütfen tekrar deneyin.'})
+            yield f"event: error\ndata: {error_payload}\n\n"
+
+    response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
+    response['Cache-Control'] = 'no-cache'
+    response['X-Accel-Buffering'] = 'no'
+    return response
 
 
 def login_view(request):
@@ -121,18 +188,11 @@ def chat_api(request):
         question = data.get('question', '').strip()
         session_id = data.get('session_id') or request.session.get('chat_session_id')
 
-        if not question:
-            return JsonResponse({'error': 'Soru boş olamaz.'}, status=400)
+        validation_error = _validate_question(question)
+        if validation_error:
+            return validation_error
 
-        if len(question) > 1000:
-            return JsonResponse({'error': 'Soru çok uzun (max 1000 karakter).'}, status=400)
-
-        if session_id:
-            session = ChatSession.objects.filter(id=session_id, owner=request.user).first()
-            if not session:
-                session = _create_user_session(request)
-        else:
-            session = _create_user_session(request)
+        session = _resolve_session_for_request(request, session_id)
 
         context, sources = get_context_for_question(question)
         answer = get_answer(question, context)
@@ -167,56 +227,56 @@ def chat_api_stream(request):
         question = data.get('question', '').strip()
         session_id = data.get('session_id') or request.session.get('chat_session_id')
 
-        if not question:
-            return JsonResponse({'error': 'Soru boş olamaz.'}, status=400)
+        validation_error = _validate_question(question)
+        if validation_error:
+            return validation_error
 
-        if len(question) > 1000:
-            return JsonResponse({'error': 'Soru çok uzun (max 1000 karakter).'}, status=400)
-
-        if session_id:
-            session = ChatSession.objects.filter(id=session_id, owner=request.user).first()
-            if not session:
-                session = _create_user_session(request)
-        else:
-            session = _create_user_session(request)
-
-        context, sources = get_context_for_question(question)
-
-        def event_stream():
-            full_answer: list[str] = []
-            try:
-                for piece in stream_answer(question, context):
-                    full_answer.append(piece)
-                    payload = json.dumps({'text': piece})
-                    yield f"event: chunk\ndata: {payload}\n\n"
-
-                answer = ''.join(full_answer).strip()
-                message = ChatMessage.objects.create(
-                    session=session,
-                    question=question,
-                    answer=answer,
-                    sources=sources,
-                )
-                done_payload = json.dumps({
-                    'answer': answer,
-                    'sources': sources,
-                    'session_id': str(session.id),
-                    'message_id': message.id,
-                })
-                yield f"event: done\ndata: {done_payload}\n\n"
-            except Exception as exc:
-                logger.error("Streaming chat API error: %s", exc, exc_info=True)
-                error_payload = json.dumps({'error': 'Bir hata oluştu. Lütfen tekrar deneyin.'})
-                yield f"event: error\ndata: {error_payload}\n\n"
-
-        response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
-        response['Cache-Control'] = 'no-cache'
-        response['X-Accel-Buffering'] = 'no'
-        return response
+        session = _resolve_session_for_request(request, session_id)
+        return _stream_message_answer(session, question)
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Geçersiz istek formatı.'}, status=400)
     except Exception as e:
         logger.error(f"Streaming chat API setup error: {e}", exc_info=True)
+        return JsonResponse({'error': 'Bir hata oluştu. Lütfen tekrar deneyin.'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def edit_message_stream(request, message_id):
+    try:
+        data = json.loads(request.body)
+        question = data.get('question', '').strip()
+        session_id = data.get('session_id') or request.session.get('chat_session_id')
+
+        validation_error = _validate_question(question)
+        if validation_error:
+            return validation_error
+
+        session = ChatSession.objects.filter(id=session_id, owner=request.user).first()
+        if not session:
+            return JsonResponse({'error': 'Sohbet bulunamadı.'}, status=404)
+
+        message = ChatMessage.objects.filter(id=message_id, session=session).first()
+        if not message:
+            return JsonResponse({'error': 'Düzenlenecek mesaj bulunamadı.'}, status=404)
+
+        deleted_message_ids = list(
+            session.messages.filter(id__gt=message.id).values_list('id', flat=True)
+        )
+        if deleted_message_ids:
+            session.messages.filter(id__in=deleted_message_ids).delete()
+
+        return _stream_message_answer(
+            session,
+            question,
+            message=message,
+            deleted_message_ids=deleted_message_ids,
+        )
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Geçersiz istek formatı.'}, status=400)
+    except Exception as exc:
+        logger.error("Edit chat API error: %s", exc, exc_info=True)
         return JsonResponse({'error': 'Bir hata oluştu. Lütfen tekrar deneyin.'}, status=500)
 
 

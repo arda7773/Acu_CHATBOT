@@ -151,23 +151,31 @@
 
                 {% for msg in messages %}
                 <!-- User message -->
-                <div class="message user-message">
+                <div class="message user-message" data-message-id="{{ msg.id }}" data-role="user">
                     <div class="message-avatar user-avatar">S</div>
                     <div class="message-bubble user-bubble">
                         <div class="message-text">{{ msg.question }}</div>
                         <div class="message-footer">
                             <span class="message-time">{{ msg.created_at|date:"H:i" }}</span>
-                            <button class="copy-btn" title="Kopyala" onclick="copyText(this, '{{ msg.question|escapejs }}')">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-                                </svg>
-                            </button>
+                            <div class="message-actions">
+                                <button class="edit-btn" title="Soruyu düzenle" data-edit-message-id="{{ msg.id }}">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 20h9"/>
+                                        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+                                    </svg>
+                                </button>
+                                <button class="copy-btn" title="Kopyala" onclick="copyText(this, '{{ msg.question|escapejs }}')">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
                 <!-- Bot message -->
-                <div class="message bot-message">
+                <div class="message bot-message" data-message-id="{{ msg.id }}" data-role="bot">
                     <div class="message-avatar bot-avatar">AI</div>
                     <div class="message-bubble bot-bubble">
                         <div class="message-text">{{ msg.answer }}</div>
@@ -220,6 +228,13 @@
 
             <!-- Input Area -->
             <div class="input-area">
+                <div class="edit-banner" id="edit-banner" hidden>
+                    <div class="edit-banner-copy">
+                        <span class="edit-banner-label">Mesaj düzenleniyor</span>
+                        <span class="edit-banner-text" id="edit-banner-text"></span>
+                    </div>
+                    <button class="edit-cancel-btn" id="edit-cancel-btn" type="button">İptal</button>
+                </div>
                 <div class="input-container">
                     <textarea
                         id="question-input"
@@ -250,6 +265,7 @@
         const SESSION_ID = "{{ session_id }}";
         const API_URL    = "{% url 'chat_api' %}";
         const API_STREAM_URL = "{% url 'chat_api_stream' %}";
+        const EDIT_STREAM_URL_TEMPLATE = "{% url 'edit_message_stream' 0 %}";
 
         /* ─── Elements ─── */
         const messagesArea    = document.getElementById('messages-area');
@@ -264,7 +280,11 @@
         const overlay         = document.getElementById('sidebar-overlay');
         const hamburgerBtn    = document.getElementById('hamburger-btn');
         const toast           = document.getElementById('toast');
+        const editBanner      = document.getElementById('edit-banner');
+        const editBannerText  = document.getElementById('edit-banner-text');
+        const editCancelBtn   = document.getElementById('edit-cancel-btn');
         const deleteButtons   = document.querySelectorAll('.history-delete-btn');
+        let editingMessageId  = null;
 
         /* ─── Scroll helpers ─── */
         function isNearBottom() {
@@ -319,6 +339,48 @@
             }).catch(() => showToast('Kopyalanamadı.'));
         }
 
+        function getEditStreamUrl(messageId) {
+            return EDIT_STREAM_URL_TEMPLATE.replace('/0/', `/${messageId}/`);
+        }
+
+        function truncateLabel(text, max = 80) {
+            return text.length > max ? text.slice(0, max) + '…' : text;
+        }
+
+        function getMessagePair(messageId) {
+            return {
+                user: messagesArea.querySelector(`.message.user-message[data-message-id="${messageId}"]`),
+                bot: messagesArea.querySelector(`.message.bot-message[data-message-id="${messageId}"]`),
+            };
+        }
+
+        function setEditMode(messageId, question) {
+            editingMessageId = String(messageId);
+            editBanner.hidden = false;
+            editBannerText.textContent = truncateLabel(question);
+            questionInput.value = question;
+            questionInput.dispatchEvent(new Event('input'));
+            questionInput.focus();
+            questionInput.setSelectionRange(question.length, question.length);
+        }
+
+        function clearEditMode() {
+            editingMessageId = null;
+            editBanner.hidden = true;
+            editBannerText.textContent = '';
+        }
+
+        function bindEditBtn(btn) {
+            btn.addEventListener('click', () => {
+                const messageId = btn.dataset.editMessageId;
+                if (!messageId) return;
+                const pair = getMessagePair(messageId);
+                const question = pair.user?.querySelector('.message-text')?.textContent?.trim();
+                if (!question) return;
+                setEditMode(messageId, question);
+            });
+        }
+
         /* ─── Auto-resize textarea ─── */
         questionInput.addEventListener('input', function () {
             this.style.height = 'auto';
@@ -340,6 +402,14 @@
         }
 
         document.querySelectorAll('.welcome-chip').forEach(bindQuickBtn);
+        document.querySelectorAll('.edit-btn').forEach(bindEditBtn);
+
+        editCancelBtn.addEventListener('click', () => {
+            clearEditMode();
+            questionInput.value = '';
+            questionInput.dispatchEvent(new Event('input'));
+            questionInput.focus();
+        });
 
         deleteButtons.forEach(btn => {
             btn.addEventListener('click', async (e) => {
@@ -420,14 +490,17 @@
         }
 
         /* ─── Append message ─── */
-        function appendMessage(role, text, sources = []) {
+        function appendMessage(role, text, sources = [], options = {}) {
             const welcome = document.querySelector('.welcome-card');
             if (welcome) welcome.remove();
 
             const isUser = role === 'user';
+            const messageId = options.messageId ? String(options.messageId) : '';
 
             const wrapper = document.createElement('div');
             wrapper.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
+            wrapper.dataset.role = isUser ? 'user' : 'bot';
+            if (messageId) wrapper.dataset.messageId = messageId;
 
             const avatar = document.createElement('div');
             avatar.className = `message-avatar ${isUser ? 'user-avatar' : 'bot-avatar'}`;
@@ -469,12 +542,26 @@
             time.textContent = nowStr();
             footer.appendChild(time);
 
+            const actions = document.createElement('div');
+            actions.className = 'message-actions';
+
+            if (isUser) {
+                const editBtn = document.createElement('button');
+                editBtn.className = 'edit-btn';
+                editBtn.title = 'Soruyu düzenle';
+                if (messageId) editBtn.dataset.editMessageId = messageId;
+                editBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`;
+                bindEditBtn(editBtn);
+                actions.appendChild(editBtn);
+            }
+
             const copyBtn = document.createElement('button');
             copyBtn.className = 'copy-btn';
             copyBtn.title = 'Kopyala';
-            copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>`;
-            copyBtn.addEventListener('click', () => copyText(copyBtn, text));
-            footer.appendChild(copyBtn);
+            copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+            copyBtn.addEventListener('click', () => copyText(copyBtn, textEl.textContent));
+            actions.appendChild(copyBtn);
+            footer.appendChild(actions);
 
             bubble.appendChild(footer);
             wrapper.appendChild(avatar);
@@ -512,38 +599,121 @@
             bubble.insertBefore(srcArea, footer);
         }
 
+        function clearSources(bubble) {
+            const existing = bubble.querySelector('.sources-area');
+            if (existing) existing.remove();
+        }
+
+        function updateMessageBindings(messageId, question, userMessage, botMessage) {
+            const normalizedId = String(messageId);
+            [userMessage, botMessage].forEach(item => {
+                if (!item?.wrapper) return;
+                item.wrapper.dataset.messageId = normalizedId;
+            });
+
+            const editBtn = userMessage?.wrapper?.querySelector('.edit-btn');
+            if (editBtn) {
+                editBtn.dataset.editMessageId = normalizedId;
+            }
+            const copyBtn = userMessage?.wrapper?.querySelector('.copy-btn');
+            if (copyBtn) {
+                copyBtn.onclick = null;
+            }
+            updateActiveHistoryTitle(question);
+        }
+
+        function updateActiveHistoryTitle(question) {
+            const activeTitle = document.querySelector('.history-btn.active .history-title');
+            if (!activeTitle) return;
+            activeTitle.textContent = truncateLabel(question, 60);
+        }
+
+        function removeMessagesAfter(messageId) {
+            const currentId = Number(messageId);
+            messagesArea.querySelectorAll('.message[data-message-id]').forEach(node => {
+                const nodeId = Number(node.dataset.messageId);
+                if (nodeId > currentId) {
+                    node.remove();
+                }
+            });
+        }
+
         /* ─── Send message ─── */
         async function sendMessage() {
             const question = questionInput.value.trim();
             if (!question || sendBtn.disabled) return;
+            const editingId = editingMessageId;
 
             questionInput.value = '';
             questionInput.style.height = 'auto';
             charCounter.textContent = '0 / 1000';
             charCounter.className = 'char-counter';
+            clearEditMode();
 
-            appendMessage('user', question);
+            let userMessage;
+            let botMessage;
+            let requestUrl = API_STREAM_URL;
+            let payload = { question, session_id: SESSION_ID };
+
+            if (editingId) {
+                requestUrl = getEditStreamUrl(editingId);
+                payload.message_id = editingId;
+                removeMessagesAfter(editingId);
+
+                const pair = getMessagePair(editingId);
+                if (!pair.user || !pair.bot) {
+                    showToast('Düzenlenecek mesaj bulunamadı.');
+                    setStatus('error');
+                    return;
+                }
+
+                userMessage = {
+                    wrapper: pair.user,
+                    bubble: pair.user.querySelector('.message-bubble'),
+                    textEl: pair.user.querySelector('.message-text'),
+                    footer: pair.user.querySelector('.message-footer'),
+                };
+                botMessage = {
+                    wrapper: pair.bot,
+                    bubble: pair.bot.querySelector('.message-bubble'),
+                    textEl: pair.bot.querySelector('.message-text'),
+                    footer: pair.bot.querySelector('.message-footer'),
+                };
+
+                userMessage.textEl.textContent = question;
+                clearSources(botMessage.bubble);
+                botMessage.textEl.textContent = '';
+                updateActiveHistoryTitle(question);
+            } else {
+                userMessage = appendMessage('user', question);
+            }
             setStatus('loading');
             typingIndicator.classList.add('visible');
             if (isNearBottom()) scrollToBottom();
 
             try {
-                const response = await fetch(API_STREAM_URL, {
+                const response = await fetch(requestUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ question, session_id: SESSION_ID }),
+                    body: JSON.stringify(payload),
                 });
 
                 if (!response.ok || !response.body) {
                     typingIndicator.classList.remove('visible');
                     const data = await response.json();
-                    appendMessage('bot', data.error || 'Bir hata oluştu. Lütfen tekrar deneyin.');
+                    if (editingId) {
+                        botMessage.textEl.textContent = data.error || 'Bir hata oluştu. Lütfen tekrar deneyin.';
+                    } else {
+                        appendMessage('bot', data.error || 'Bir hata oluştu. Lütfen tekrar deneyin.');
+                    }
                     setStatus('error');
                     scrollToBottom();
                     return;
                 }
 
-                const botMessage = appendMessage('bot', '');
+                if (!editingId) {
+                    botMessage = appendMessage('bot', '');
+                }
                 typingIndicator.classList.remove('visible');
 
                 const reader = response.body.getReader();
@@ -572,6 +742,10 @@
                         } else if (eventName === 'done') {
                             botMessage.textEl.textContent = payload.answer || botMessage.textEl.textContent;
                             attachSources(botMessage.bubble, payload.sources || []);
+                            updateMessageBindings(payload.message_id, question, userMessage, botMessage);
+                            if (editingId && Array.isArray(payload.deleted_message_ids)) {
+                                payload.deleted_message_ids.forEach(removeMessagesAfter);
+                            }
                             setStatus('ready');
                         } else if (eventName === 'error') {
                             botMessage.textEl.textContent = payload.error || 'Bir hata oluştu. Lütfen tekrar deneyin.';
@@ -586,7 +760,11 @@
                 }
             } catch (err) {
                 typingIndicator.classList.remove('visible');
-                appendMessage('bot', 'Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.');
+                if (editingId && botMessage) {
+                    botMessage.textEl.textContent = 'Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.';
+                } else {
+                    appendMessage('bot', 'Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.');
+                }
                 setStatus('error');
             }
 
