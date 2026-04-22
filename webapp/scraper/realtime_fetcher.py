@@ -157,6 +157,12 @@ FACULTY_URL_SLUGS = {
     ),
 }
 
+_CATALOG_CACHE_TTL_SECONDS = 600
+_department_catalog_cache: tuple[float, dict[str, tuple[str, ...]]] | None = None
+_department_slug_cache: tuple[float, dict[str, tuple[str, ...]]] | None = None
+_faculty_catalog_cache: tuple[float, dict[str, tuple[str, ...]]] | None = None
+_faculty_slug_cache: tuple[float, dict[str, tuple[str, ...]]] | None = None
+
 
 def normalize_text(text: str) -> str:
     text = unicodedata.normalize('NFKC', (text or '')).lower()
@@ -172,6 +178,168 @@ def _ascii_fold(text: str) -> str:
 
 def _normalize_compact(text: str) -> str:
     return re.sub(r'[^a-z0-9]', '', _ascii_fold(text))
+
+
+def _slugify_value(text: str) -> str:
+    slug = _ascii_fold(text)
+    slug = re.sub(r'[^a-z0-9]+', '-', slug).strip('-')
+    return re.sub(r'-{2,}', '-', slug)
+
+
+def _program_name_variants(name: str) -> set[str]:
+    variants = set()
+    if not name:
+        return variants
+
+    name = re.sub(r'\s+', ' ', name).strip()
+    if not name:
+        return variants
+
+    variants.add(name)
+    ascii_name = _ascii_fold(name)
+    if ascii_name:
+        variants.add(ascii_name)
+
+    # Common question phrasings omit suffixes like "programı" / "bölümü"
+    shortened = re.sub(
+        r'\b(programı|programi|program|bölümü|bolumu|bölüm|bolum|anabilim dalı|anabilim dali|abd|ad)\b',
+        '',
+        name,
+        flags=re.IGNORECASE,
+    )
+    shortened = re.sub(r'\s+', ' ', shortened).strip(' -/')
+    if shortened and shortened != name:
+        variants.add(shortened)
+        variants.add(_ascii_fold(shortened))
+
+    for variant in list(variants):
+        compact = variant.strip()
+        if compact:
+            variants.add(compact)
+
+    return {variant for variant in variants if variant and len(variant) > 1}
+
+
+def _merge_alias_maps(
+    base_aliases: dict[str, tuple[str, ...]],
+    extra_names: set[str],
+) -> dict[str, tuple[str, ...]]:
+    merged: dict[str, set[str]] = {
+        canonical: set(aliases) | _program_name_variants(canonical)
+        for canonical, aliases in base_aliases.items()
+    }
+
+    for name in sorted(extra_names):
+        canonical = next((label for label in merged if _ascii_fold(label) == _ascii_fold(name)), name)
+        merged.setdefault(canonical, set()).update(_program_name_variants(name))
+        merged[canonical].update(_program_name_variants(canonical))
+
+    return {
+        canonical: tuple(sorted(aliases, key=lambda item: (len(item), item)))
+        for canonical, aliases in merged.items()
+    }
+
+
+def _merge_slug_maps(
+    alias_map: dict[str, tuple[str, ...]],
+    base_slugs: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[str, ...]]:
+    merged: dict[str, set[str]] = {
+        canonical: set(slugs)
+        for canonical, slugs in base_slugs.items()
+    }
+
+    for canonical, aliases in alias_map.items():
+        slug_set = merged.setdefault(canonical, set())
+        slug_set.add(_slugify_value(canonical))
+        for alias in aliases:
+            slug = _slugify_value(alias)
+            if slug:
+                slug_set.add(slug)
+
+    return {
+        canonical: tuple(sorted(slugs))
+        for canonical, slugs in merged.items()
+    }
+
+
+def _load_dynamic_catalog_names() -> tuple[set[str], set[str]]:
+    departments: set[str] = set()
+    faculties: set[str] = set()
+
+    try:
+        from scraper.models import BolognaProgram
+
+        for faculty, department, program_name in BolognaProgram.objects.values_list(
+            'faculty', 'department', 'program_name'
+        ):
+            if faculty:
+                faculties.add(faculty.strip())
+            if department:
+                departments.add(department.strip())
+            if program_name:
+                departments.add(program_name.strip())
+    except Exception as exc:
+        logger.info("[CATALOG] Could not load dynamic Bologna catalog: %s", exc)
+
+    try:
+        from scraper.models import ContentChunk
+
+        for faculty, department in ContentChunk.objects.values_list('faculty', 'department').distinct():
+            if faculty:
+                faculties.add(faculty.strip())
+            if department:
+                departments.add(department.strip())
+    except Exception:
+        pass
+
+    return departments, faculties
+
+
+def _get_department_aliases() -> dict[str, tuple[str, ...]]:
+    global _department_catalog_cache
+    now = time.time()
+    if _department_catalog_cache and now - _department_catalog_cache[0] < _CATALOG_CACHE_TTL_SECONDS:
+        return _department_catalog_cache[1]
+
+    dynamic_departments, _ = _load_dynamic_catalog_names()
+    aliases = _merge_alias_maps(DEPARTMENT_ALIASES, dynamic_departments)
+    _department_catalog_cache = (now, aliases)
+    return aliases
+
+
+def _get_department_slugs() -> dict[str, tuple[str, ...]]:
+    global _department_slug_cache
+    now = time.time()
+    if _department_slug_cache and now - _department_slug_cache[0] < _CATALOG_CACHE_TTL_SECONDS:
+        return _department_slug_cache[1]
+
+    slugs = _merge_slug_maps(_get_department_aliases(), DEPARTMENT_URL_SLUGS)
+    _department_slug_cache = (now, slugs)
+    return slugs
+
+
+def _get_faculty_aliases() -> dict[str, tuple[str, ...]]:
+    global _faculty_catalog_cache
+    now = time.time()
+    if _faculty_catalog_cache and now - _faculty_catalog_cache[0] < _CATALOG_CACHE_TTL_SECONDS:
+        return _faculty_catalog_cache[1]
+
+    _, dynamic_faculties = _load_dynamic_catalog_names()
+    aliases = _merge_alias_maps(FACULTY_ALIASES, dynamic_faculties)
+    _faculty_catalog_cache = (now, aliases)
+    return aliases
+
+
+def _get_faculty_slugs() -> dict[str, tuple[str, ...]]:
+    global _faculty_slug_cache
+    now = time.time()
+    if _faculty_slug_cache and now - _faculty_slug_cache[0] < _CATALOG_CACHE_TTL_SECONDS:
+        return _faculty_slug_cache[1]
+
+    slugs = _merge_slug_maps(_get_faculty_aliases(), FACULTY_URL_SLUGS)
+    _faculty_slug_cache = (now, slugs)
+    return slugs
 
 
 def _word_similarity(left: str, right: str) -> float:
@@ -280,7 +448,7 @@ def extract_course_codes(text: str) -> list[str]:
 
 def _find_department_mentions(text: str) -> list[str]:
     hits = []
-    for label, aliases in DEPARTMENT_ALIASES.items():
+    for label, aliases in _get_department_aliases().items():
         if any(_contains_fuzzy_phrase(text, alias, threshold=0.84) for alias in aliases):
             hits.append(label.lower())
     return hits
@@ -293,7 +461,7 @@ def _primary_department(question: str) -> str:
 
 def _primary_faculty(question: str) -> str:
     normalized = normalize_text(question)
-    for label, aliases in FACULTY_ALIASES.items():
+    for label, aliases in _get_faculty_aliases().items():
         if any(_contains_fuzzy_phrase(normalized, alias, threshold=0.84) for alias in aliases):
             return label.lower()
     return ''
@@ -415,29 +583,33 @@ def _resolve_university_address() -> str:
 
 
 def _department_slug_variants(department: str) -> tuple[str, ...]:
-    canonical = next((name for name in DEPARTMENT_URL_SLUGS if name.lower() == department), '')
-    return DEPARTMENT_URL_SLUGS.get(canonical, ())
+    slug_map = _get_department_slugs()
+    canonical = next((name for name in slug_map if name.lower() == department), '')
+    return slug_map.get(canonical, ())
 
 
 def _faculty_slug_variants(faculty: str) -> tuple[str, ...]:
-    canonical = next((name for name in FACULTY_URL_SLUGS if name.lower() == faculty), '')
-    return FACULTY_URL_SLUGS.get(canonical, ())
+    slug_map = _get_faculty_slugs()
+    canonical = next((name for name in slug_map if name.lower() == faculty), '')
+    return slug_map.get(canonical, ())
 
 
 def _department_display_name(department: str) -> str:
-    return next((name for name in DEPARTMENT_ALIASES if name.lower() == department), department)
+    return next((name for name in _get_department_aliases() if name.lower() == department), department)
 
 
 def _faculty_display_name(faculty: str) -> str:
-    return next((name for name in FACULTY_ALIASES if name.lower() == faculty), faculty)
+    return next((name for name in _get_faculty_aliases() if name.lower() == faculty), faculty)
 
 
 def _has_department_match(haystack: str, department: str) -> bool:
     if not department:
         return False
-    canonical = next((name for name in DEPARTMENT_ALIASES if name.lower() == department), '')
-    aliases = DEPARTMENT_ALIASES.get(canonical, ())
-    slugs = DEPARTMENT_URL_SLUGS.get(canonical, ())
+    alias_map = _get_department_aliases()
+    slug_map = _get_department_slugs()
+    canonical = next((name for name in alias_map if name.lower() == department), '')
+    aliases = alias_map.get(canonical, ())
+    slugs = slug_map.get(canonical, ())
     lowered = normalize_text(haystack)
     return (
         any(_contains_fuzzy_phrase(haystack, alias, threshold=0.84) for alias in aliases) or
@@ -447,10 +619,11 @@ def _has_department_match(haystack: str, department: str) -> bool:
 
 def _mentions_other_department(haystack: str, department: str) -> bool:
     lowered = normalize_text(haystack)
-    for name, aliases in DEPARTMENT_ALIASES.items():
+    slug_map = _get_department_slugs()
+    for name, aliases in _get_department_aliases().items():
         if name.lower() == department:
             continue
-        slugs = DEPARTMENT_URL_SLUGS.get(name, ())
+        slugs = slug_map.get(name, ())
         if any(_contains_fuzzy_phrase(haystack, alias, threshold=0.84) for alias in aliases) or any(slug in lowered for slug in slugs):
             return True
     return False
@@ -469,17 +642,13 @@ def extract_named_entities(question: str) -> dict[str, list[str]]:
     faculty_hits = []
     dept_hits = _find_department_mentions(question)
 
-    for label in (
-        'tıp fakültesi', 'eczacılık fakültesi', 'sağlık bilimleri fakültesi',
-        'mühendislik ve doğa bilimleri fakültesi', 'fen edebiyat fakültesi',
-        'meslek yüksekokulu', 'lisansüstü eğitim enstitüsü',
-    ):
-        if label in normalized:
-            faculty_hits.append(label)
+    for label, aliases in _get_faculty_aliases().items():
+        if any(_contains_fuzzy_phrase(normalized, alias, threshold=0.84) for alias in aliases):
+            faculty_hits.append(label.lower())
 
     return {
         'course_codes': extract_course_codes(question),
-        'faculties': faculty_hits,
+        'faculties': list(dict.fromkeys(faculty_hits)),
         'departments': list(dict.fromkeys(dept_hits)),
     }
 
@@ -1335,7 +1504,7 @@ def _search_targeted_course_pages(
         return []
 
     display_name = _department_display_name(department)
-    aliases = DEPARTMENT_ALIASES.get(display_name, (display_name.lower(),))
+    aliases = _get_department_aliases().get(display_name, (display_name.lower(),))
 
     query = Q()
     for alias in aliases:
@@ -1409,8 +1578,9 @@ def _search_targeted_fee_pages(question: str) -> list[dict]:
 
 
 def _extract_department_fee_section(text: str, department: str) -> str:
-    canonical = next((name for name in DEPARTMENT_ALIASES if name.lower() == department), department)
-    aliases = list(DEPARTMENT_ALIASES.get(canonical, (canonical,)))
+    alias_map = _get_department_aliases()
+    canonical = next((name for name in alias_map if name.lower() == department), department)
+    aliases = list(alias_map.get(canonical, (canonical,)))
 
     lines = text.split('\n')
     start_idx = -1
@@ -1440,8 +1610,9 @@ def _exchange_question_mentions_countries(question: str) -> bool:
 
 def _extract_department_erasmus_section(text: str, department: str, max_chars: int = 3500) -> str:
     """Extract the contiguous İkili Anlaşmalar table section for a specific department."""
-    canonical = next((name for name in DEPARTMENT_ALIASES if name.lower() == department), department)
-    aliases = list(DEPARTMENT_ALIASES.get(canonical, (canonical,)))
+    alias_map = _get_department_aliases()
+    canonical = next((name for name in alias_map if name.lower() == department), department)
+    aliases = list(alias_map.get(canonical, (canonical,)))
 
     lines = text.split('\n')
     start_idx = -1
@@ -1456,7 +1627,11 @@ def _extract_department_erasmus_section(text: str, department: str, max_chars: i
 
     # Section ends when another department/faculty header appears
     section_lines = [lines[start_idx]]
-    dept_header_keywords = {normalize_text(a) for aliases_list in DEPARTMENT_ALIASES.values() for a in aliases_list}
+    dept_header_keywords = {
+        normalize_text(alias)
+        for aliases_list in alias_map.values()
+        for alias in aliases_list
+    }
     faculty_markers = ('fakülte', 'yüksekokul', 'enstitü', 'myo', 'fakulte', 'yuksekokul', 'enstitu')
 
     for line in lines[start_idx + 1:]:

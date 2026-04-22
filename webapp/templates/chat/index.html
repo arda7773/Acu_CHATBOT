@@ -245,13 +245,21 @@
                     ></textarea>
                     <div class="input-actions">
                         <button id="send-btn" title="Gönder (Enter)" aria-label="Gönder">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                <line x1="22" y1="2" x2="11" y2="13"/>
-                                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                            </svg>
+                            <span class="send-icon send-icon-send" aria-hidden="true">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                    <line x1="22" y1="2" x2="11" y2="13"/>
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                                </svg>
+                            </span>
+                            <span class="send-icon send-icon-stop" aria-hidden="true">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                    <rect x="6" y="6" width="12" height="12" rx="2"/>
+                                </svg>
+                            </span>
                         </button>
                     </div>
                 </div>
+                <div class="stream-note" id="stream-note" hidden></div>
                 <div class="input-meta">
                     <span class="input-hint">Enter ile gönder &nbsp;·&nbsp; Shift+Enter ile yeni satır</span>
                     <span class="char-counter" id="char-counter">0 / 1000</span>
@@ -283,8 +291,27 @@
         const editBanner      = document.getElementById('edit-banner');
         const editBannerText  = document.getElementById('edit-banner-text');
         const editCancelBtn   = document.getElementById('edit-cancel-btn');
+        const streamNote      = document.getElementById('stream-note');
         const deleteButtons   = document.querySelectorAll('.history-delete-btn');
         let editingMessageId  = null;
+        let currentAbortController = null;
+        let streamingStoppedByUser = false;
+
+        function showStreamNote(message) {
+            streamNote.textContent = message;
+            streamNote.hidden = false;
+        }
+
+        function hideStreamNote() {
+            streamNote.hidden = true;
+            streamNote.textContent = '';
+        }
+
+        function stopStreaming() {
+            if (!currentAbortController) return;
+            streamingStoppedByUser = true;
+            currentAbortController.abort();
+        }
 
         /* ─── Scroll helpers ─── */
         function isNearBottom() {
@@ -465,12 +492,18 @@
             if (state === 'loading') {
                 statusDot.className = 'status-dot loading';
                 statusText.textContent = 'Yanıt alınıyor...';
-                sendBtn.disabled = true;
+                sendBtn.disabled = false;
+                sendBtn.classList.add('is-streaming');
+                sendBtn.title = 'Yanıtı durdur';
+                sendBtn.setAttribute('aria-label', 'Yanıtı durdur');
                 questionInput.disabled = true;
             } else if (state === 'error') {
                 statusDot.className = 'status-dot error';
                 statusText.textContent = 'Hata oluştu';
                 sendBtn.disabled = false;
+                sendBtn.classList.remove('is-streaming');
+                sendBtn.title = 'Gönder (Enter)';
+                sendBtn.setAttribute('aria-label', 'Gönder');
                 questionInput.disabled = false;
                 questionInput.focus();
                 setTimeout(() => setStatus('ready'), 3000);
@@ -478,6 +511,9 @@
                 statusDot.className = 'status-dot';
                 statusText.textContent = 'Hazır';
                 sendBtn.disabled = false;
+                sendBtn.classList.remove('is-streaming');
+                sendBtn.title = 'Gönder (Enter)';
+                sendBtn.setAttribute('aria-label', 'Gönder');
                 questionInput.disabled = false;
                 questionInput.focus();
             }
@@ -640,9 +676,15 @@
 
         /* ─── Send message ─── */
         async function sendMessage() {
+            if (currentAbortController) {
+                stopStreaming();
+                return;
+            }
+
             const question = questionInput.value.trim();
             if (!question || sendBtn.disabled) return;
             const editingId = editingMessageId;
+            hideStreamNote();
 
             questionInput.value = '';
             questionInput.style.height = 'auto';
@@ -692,10 +734,14 @@
             if (isNearBottom()) scrollToBottom();
 
             try {
+                const abortController = new AbortController();
+                currentAbortController = abortController;
+                streamingStoppedByUser = false;
                 const response = await fetch(requestUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
+                    signal: abortController.signal,
                 });
 
                 if (!response.ok || !response.body) {
@@ -720,6 +766,23 @@
                 const decoder = new TextDecoder();
                 let buffer = '';
                 let hasError = false;
+                let pendingText = '';
+                let flushTimer = null;
+
+                const flushPendingText = () => {
+                    if (!pendingText) return;
+                    botMessage.textEl.textContent += pendingText;
+                    pendingText = '';
+                    if (isNearBottom()) scrollToBottom();
+                };
+
+                const scheduleFlush = () => {
+                    if (flushTimer) return;
+                    flushTimer = setTimeout(() => {
+                        flushTimer = null;
+                        flushPendingText();
+                    }, 24);
+                };
 
                 while (true) {
                     const { value, done } = await reader.read();
@@ -737,9 +800,14 @@
 
                         const payload = JSON.parse(dataLine.slice(5).trim());
                         if (eventName === 'chunk') {
-                            botMessage.textEl.textContent += payload.text || '';
-                            if (isNearBottom()) scrollToBottom();
+                            pendingText += payload.text || '';
+                            scheduleFlush();
                         } else if (eventName === 'done') {
+                            if (flushTimer) {
+                                clearTimeout(flushTimer);
+                                flushTimer = null;
+                            }
+                            flushPendingText();
                             botMessage.textEl.textContent = payload.answer || botMessage.textEl.textContent;
                             attachSources(botMessage.bubble, payload.sources || []);
                             updateMessageBindings(payload.message_id, question, userMessage, botMessage);
@@ -748,6 +816,11 @@
                             }
                             setStatus('ready');
                         } else if (eventName === 'error') {
+                            if (flushTimer) {
+                                clearTimeout(flushTimer);
+                                flushTimer = null;
+                            }
+                            flushPendingText();
                             botMessage.textEl.textContent = payload.error || 'Bir hata oluştu. Lütfen tekrar deneyin.';
                             setStatus('error');
                             hasError = true;
@@ -760,12 +833,20 @@
                 }
             } catch (err) {
                 typingIndicator.classList.remove('visible');
-                if (editingId && botMessage) {
-                    botMessage.textEl.textContent = 'Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.';
+                if (err.name === 'AbortError' && streamingStoppedByUser) {
+                    showStreamNote('Yanıt durduruldu. Görünen son metin korundu.');
+                    setStatus('ready');
                 } else {
-                    appendMessage('bot', 'Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.');
+                    if (editingId && botMessage) {
+                        botMessage.textEl.textContent = 'Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.';
+                    } else {
+                        appendMessage('bot', 'Sunucuya bağlanılamadı. Lütfen internet bağlantınızı kontrol edin.');
+                    }
+                    setStatus('error');
                 }
-                setStatus('error');
+            } finally {
+                currentAbortController = null;
+                streamingStoppedByUser = false;
             }
 
             scrollToBottom();
