@@ -1,5 +1,6 @@
 import time
 import logging
+import re
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse, parse_qs
@@ -38,6 +39,26 @@ GENERAL_PAGES = {
     400: ('Bologna Süreci', 'Bologna Bilgileri'),
 }
 
+PROGRAM_SECTION_PAGES = (
+    ('Eğitim Türü (Amaçlar) ve Hedefler', 'progGoalsObjectives.aspx'),
+    ('Program Hakkında', 'progAbout.aspx'),
+    ('Program Profili', 'progProfile.aspx'),
+    ('Program Yetkilileri', 'progOfficials.aspx'),
+    ('Alınacak Derece', 'progDegree.aspx'),
+    ('Kabul Koşulları', 'progAdmissionReq.aspx'),
+    ('Üst Kademeye Geçiş', 'progAccessFurhterStudies.aspx'),
+    ('Mezuniyet Koşulları', 'progGraduationReq.aspx'),
+    ('Önceki Öğrenmenin Tanınması', 'progRecogPriorLearning.aspx'),
+    ('Yeterlilik Koşulları ve Kuralları', 'progQualifyReqReg.aspx'),
+    ('İstihdam Olanakları', 'progOccupationalProf.aspx'),
+    ('Program Yeterlilikleri', 'progLearnOutcomes.aspx'),
+    ('Dersler', 'progCourses.aspx'),
+    ('Ders & Program Yeterlilikleri İlişkisi', 'progCourseMatrix.aspx'),
+    ('TYYÇ - Program Yeterlilikleri İlişkisi', 'progTYYCMatrix.aspx'),
+    ('Akademik Personel', 'progAcademicStaff.aspx'),
+    ('İletişim', 'progContact.aspx'),
+)
+
 
 def fetch_html(url: str) -> BeautifulSoup | None:
     try:
@@ -52,7 +73,101 @@ def fetch_html(url: str) -> BeautifulSoup | None:
 def clean_text(soup: BeautifulSoup) -> str:
     text = soup.get_text(separator='\n', strip=True)
     lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) > 2]
-    return '\n'.join(lines)
+    return sanitize_db_text('\n'.join(lines))
+
+
+def sanitize_db_text(text: str) -> str:
+    """PostgreSQL text fields cannot store NUL bytes from malformed page content."""
+    return (text or '').replace('\x00', '')
+
+
+def _hidden_form_payload(soup: BeautifulSoup) -> dict[str, str]:
+    return {
+        input_tag.get('name'): input_tag.get('value', '')
+        for input_tag in soup.find_all('input')
+        if input_tag.get('name')
+    }
+
+
+def _course_row_event_target(row) -> str:
+    link = row.find('a', id=lambda value: value and 'btnDersAyrinti' in value)
+    if not link:
+        return ''
+    href = link.get('href', '')
+    match = re.search(r"__doPostBack\('([^']+)'", href)
+    return match.group(1) if match else ''
+
+
+def scrape_course_detail_pages(courses_url: str, soup: BeautifulSoup) -> list[str]:
+    """
+    Fetch every clickable course detail page from a program's Dersler table.
+    The OBS page uses ASP.NET postbacks; posting the row target redirects to
+    progCourseDetails.aspx?curCourse=...
+    """
+    session = requests.Session()
+    try:
+        response = session.get(courses_url, headers=HEADERS, timeout=20)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, 'html.parser')
+    except requests.RequestException as exc:
+        logger.warning("Could not refresh course list before detail scraping %s: %s", courses_url, exc)
+
+    payload = _hidden_form_payload(soup)
+    details: list[str] = []
+    seen_targets: set[str] = set()
+    seen_urls: set[str] = set()
+
+    for row in soup.find_all('tr'):
+        cells = [cell.get_text(' ', strip=True) for cell in row.find_all('td')]
+        if len(cells) < 6:
+            continue
+
+        course_code = cells[1] if len(cells) > 1 else ''
+        course_name = cells[2] if len(cells) > 2 else ''
+        if not course_code or not course_name:
+            continue
+
+        event_target = _course_row_event_target(row)
+        if not event_target or event_target in seen_targets:
+            continue
+        seen_targets.add(event_target)
+
+        post_data = dict(payload)
+        post_data['__EVENTTARGET'] = event_target
+        post_data['__EVENTARGUMENT'] = ''
+
+        try:
+            response = session.post(
+                courses_url,
+                data=post_data,
+                headers={**HEADERS, 'Referer': courses_url},
+                timeout=20,
+                allow_redirects=True,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logger.warning("Course detail fetch failed for %s %s: %s", course_code, course_name, exc)
+            continue
+
+        if response.url in seen_urls:
+            continue
+        seen_urls.add(response.url)
+
+        detail_soup = BeautifulSoup(response.content, 'html.parser')
+        text = clean_text(detail_soup)
+        if len(text) < 80:
+            continue
+
+        details.append(
+            '\n'.join([
+                f"--- DERS BİLGİ PAKETİ: {course_code} - {course_name} ---",
+                f"Kaynak: {response.url}",
+                text,
+            ])
+        )
+        time.sleep(0.4)
+
+    return details
 
 
 def get_all_program_links() -> list[dict]:
@@ -117,19 +232,20 @@ def scrape_program_content(cur_sunit: str) -> str:
     """
     parts = []
 
-    # Program info page
-    soup = fetch_html(BASE_URL + f'progAbout.aspx?lang=tr&curSunit={cur_sunit}')
-    if soup:
-        text = clean_text(soup)
-        if text:
-            parts.append(text)
+    for section_title, endpoint in PROGRAM_SECTION_PAGES:
+        url = BASE_URL + f'{endpoint}?lang=tr&curSunit={cur_sunit}'
+        soup = fetch_html(url)
+        if not soup:
+            continue
 
-    # Full course/curriculum list
-    soup = fetch_html(BASE_URL + f'progCourses.aspx?lang=tr&curSunit={cur_sunit}')
-    if soup:
         text = clean_text(soup)
-        if len(text) > 100:
-            parts.append('--- DERS PLANI ---\n' + text)
+        if len(text) > 50:
+            parts.append(f'--- {section_title.upper()} ---\nKaynak: {url}\n{text}')
+
+        if endpoint == 'progCourses.aspx':
+            parts.extend(scrape_course_detail_pages(url, soup))
+
+        time.sleep(0.4)
 
     return '\n\n'.join(parts)
 
@@ -158,10 +274,10 @@ def scrape_general_pages():
         _, is_new = BolognaProgram.objects.update_or_create(
             url=url,
             defaults={
-                'faculty': category,
-                'department': title,
-                'program_name': title,
-                'content': content,
+                'faculty': sanitize_db_text(category)[:300],
+                'department': sanitize_db_text(title)[:300],
+                'program_name': sanitize_db_text(title)[:300],
+                'content': sanitize_db_text(content),
             }
         )
         logger.info(f"  General page saved: {title} ({len(content)} chars)")
@@ -175,7 +291,16 @@ def scrape_general_pages():
     logger.info(f"General pages: {created} new, {updated} updated")
 
 
-def scrape_all_bologna():
+def _has_complete_program_content(content: str) -> bool:
+    content = content or ''
+    return (
+        '--- PROGRAM HAKKINDA ---' in content and
+        '--- DERSLER ---' in content and
+        '--- DERS BİLGİ PAKETİ:' in content
+    )
+
+
+def scrape_all_bologna(skip_existing: bool = False, start_at: int = 1):
     """
     Main entry point. Uses requests+BeautifulSoup — no Selenium needed.
     Scrapes:
@@ -203,6 +328,10 @@ def scrape_all_bologna():
     updated = 0
 
     for i, program in enumerate(programs, start=1):
+        if i < start_at:
+            logger.info(f"[{i}/{total}] Skipping before start_at={start_at}")
+            continue
+
         name = program['name']
         url = program['url']
         faculty = program['faculty']
@@ -210,6 +339,12 @@ def scrape_all_bologna():
         prog_type = program['program_type']
 
         logger.info(f"[{i}/{total}] {prog_type} | {faculty} | {name}")
+
+        if skip_existing:
+            existing = BolognaProgram.objects.filter(url=url).only('content').first()
+            if existing and _has_complete_program_content(existing.content):
+                logger.info(f"  Already has full Bologna content, skipping: {name}")
+                continue
 
         content = scrape_program_content(cur_sunit)
 
@@ -220,10 +355,10 @@ def scrape_all_bologna():
         _, is_new = BolognaProgram.objects.update_or_create(
             url=url,
             defaults={
-                'faculty': faculty[:300],
-                'department': name[:300],
-                'program_name': f"{prog_type} - {name}"[:300],
-                'content': content,
+                'faculty': sanitize_db_text(faculty)[:300],
+                'department': sanitize_db_text(name)[:300],
+                'program_name': sanitize_db_text(f"{prog_type} - {name}")[:300],
+                'content': sanitize_db_text(content),
             }
         )
 

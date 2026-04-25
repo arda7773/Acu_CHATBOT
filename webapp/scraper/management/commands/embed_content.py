@@ -6,6 +6,7 @@ Usage:
     python manage.py embed_content --source scraped
     python manage.py embed_content --source bologna
     python manage.py embed_content --reset          # wipe and rebuild
+    python manage.py embed_content --source bologna --resume
 """
 import time
 import logging
@@ -40,17 +41,23 @@ class Command(BaseCommand):
             default=50,
             help='Number of chunks to bulk-insert at once (default: 50)',
         )
+        parser.add_argument(
+            '--resume',
+            action='store_true',
+            help='Skip fully embedded records and rebuild only partial records.',
+        )
 
     def handle(self, *args, **options):
         source = options['source']
         reset = options['reset']
         batch_size = options['batch_size']
+        resume = options['resume']
 
         if source in ('scraped', 'all'):
-            self._embed_scraped(reset=reset, batch_size=batch_size)
+            self._embed_scraped(reset=reset, batch_size=batch_size, resume=resume)
 
         if source in ('bologna', 'all'):
-            self._embed_bologna(reset=reset, batch_size=batch_size)
+            self._embed_bologna(reset=reset, batch_size=batch_size, resume=resume)
 
         total = ContentChunk.objects.count()
         self.stdout.write(self.style.SUCCESS(
@@ -58,7 +65,7 @@ class Command(BaseCommand):
         ))
 
     # ------------------------------------------------------------------
-    def _embed_scraped(self, reset: bool, batch_size: int):
+    def _embed_scraped(self, reset: bool, batch_size: int, resume: bool):
         from scraper.models import ScrapedPage
 
         if reset:
@@ -79,9 +86,10 @@ class Command(BaseCommand):
             get_department=lambda p: '',
             get_scraped_at=lambda p: p.scraped_at,
             batch_size=batch_size,
+            resume=resume and not reset,
         )
 
-    def _embed_bologna(self, reset: bool, batch_size: int):
+    def _embed_bologna(self, reset: bool, batch_size: int, resume: bool):
         from scraper.models import BolognaProgram
 
         if reset:
@@ -102,6 +110,7 @@ class Command(BaseCommand):
             get_department=lambda p: p.department,
             get_scraped_at=lambda p: p.scraped_at.isoformat() if p.scraped_at else '',
             batch_size=batch_size,
+            resume=resume and not reset,
         )
 
     # ------------------------------------------------------------------
@@ -117,9 +126,10 @@ class Command(BaseCommand):
         get_department,
         get_scraped_at,
         batch_size,
+        resume,
     ):
         buffer = []
-        ok = skip = fail = 0
+        ok = skip = fail = resumed = partial = 0
 
         for i, record in enumerate(records, start=1):
             title = get_title(record)
@@ -130,12 +140,8 @@ class Command(BaseCommand):
             department = get_department(record)
             scraped_at = get_scraped_at(record)
 
-            chunks = chunk_text(text)
-            if not chunks:
-                skip += 1
-                continue
-
-            for idx, chunk in enumerate(chunks):
+            prepared_chunks = []
+            for idx, chunk in enumerate(chunk_text(text)):
                 metadata = build_chunk_metadata(
                     source_type=source_type,
                     url=url,
@@ -149,7 +155,27 @@ class Command(BaseCommand):
                 if metadata.is_noisy and metadata.page_type in {'announcement', 'event', 'news', 'promo'}:
                     skip += 1
                     continue
+                prepared_chunks.append((idx, chunk, metadata))
 
+            if not prepared_chunks:
+                skip += 1
+                continue
+
+            if resume:
+                existing_qs = ContentChunk.objects.filter(
+                    source_type=source_type,
+                    source_url=url,
+                )
+                existing_count = existing_qs.count()
+                expected_count = len(prepared_chunks)
+                if existing_count == expected_count:
+                    resumed += 1
+                    continue
+                if existing_count:
+                    existing_qs.delete()
+                    partial += 1
+
+            for idx, chunk, metadata in prepared_chunks:
                 embedding = get_embedding(chunk)
                 if embedding is None:
                     fail += 1
@@ -181,7 +207,10 @@ class Command(BaseCommand):
             # Progress every 10 records
             if i % 10 == 0:
                 self.stdout.write(
-                    f'  [{i}/{len(records)}] ok={ok} skip={skip} fail={fail}',
+                    (
+                        f'  [{i}/{len(records)}] ok={ok} skip={skip} '
+                        f'fail={fail} resumed={resumed} partial={partial}'
+                    ),
                     ending='\r',
                 )
                 self.stdout.flush()
@@ -192,5 +221,8 @@ class Command(BaseCommand):
             ContentChunk.objects.bulk_create(buffer, ignore_conflicts=True)
 
         self.stdout.write(
-            f'\n  Finished: ok={ok} skip={skip} fail={fail}'
+            (
+                f'\n  Finished: ok={ok} skip={skip} fail={fail} '
+                f'resumed={resumed} partial={partial}'
+            )
         )

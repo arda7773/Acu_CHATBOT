@@ -1459,8 +1459,9 @@ def _fetch_bologna_course_row(program_url: str, course_code: str) -> dict | None
         return None
 
     courses_url = f'https://obs.acibadem.edu.tr/oibs/bologna/progCourses.aspx?lang=tr&curSunit={cur_sunit}'
+    session = requests.Session()
     try:
-        response = requests.get(courses_url, timeout=20, headers=HEADERS)
+        response = session.get(courses_url, timeout=20, headers=HEADERS)
         response.raise_for_status()
     except requests.RequestException as exc:
         logger.warning("Could not fetch Bologna course page %s: %s", courses_url, exc)
@@ -1479,7 +1480,7 @@ def _fetch_bologna_course_row(program_url: str, course_code: str) -> dict | None
         if row_code.replace(' ', '') != target_normalized:
             continue
 
-        return {
+        details = {
             'code': row_code,
             'name': cells[2] if len(cells) > 2 else '',
             'tul': cells[3] if len(cells) > 3 else '',
@@ -1489,8 +1490,87 @@ def _fetch_bologna_course_row(program_url: str, course_code: str) -> dict | None
             'teaching_mode': cells[7] if len(cells) > 7 else '',
             'url': courses_url,
         }
+        detail = _fetch_bologna_course_detail(courses_url, soup, row, session=session)
+        if detail:
+            details.update(detail)
+        return details
 
     return None
+
+
+def _clean_bologna_detail_text(soup: BeautifulSoup, max_chars: int = 7000) -> str:
+    for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'button', 'noscript']):
+        tag.decompose()
+    text = soup.get_text('\n', strip=True)
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    clean_lines = []
+    previous = ''
+    noisy = {
+        'Bilgi Paketi', 'ACU AI Asistan | Acıbadem Üniversitesi',
+        'Yazdır', 'EN', 'TR',
+    }
+    for line in lines:
+        if line == previous or line in noisy:
+            continue
+        clean_lines.append(line)
+        previous = line
+    return '\n'.join(clean_lines)[:max_chars]
+
+
+def _hidden_form_payload(soup: BeautifulSoup) -> dict[str, str]:
+    return {
+        input_tag.get('name'): input_tag.get('value', '')
+        for input_tag in soup.find_all('input')
+        if input_tag.get('name')
+    }
+
+
+def _bologna_row_detail_event_target(row) -> str:
+    link = row.find('a', id=lambda value: value and 'btnDersAyrinti' in value)
+    if not link:
+        return ''
+    href = link.get('href', '')
+    match = re.search(r"__doPostBack\('([^']+)'", href)
+    return match.group(1) if match else ''
+
+
+def _fetch_bologna_course_detail(
+    courses_url: str,
+    courses_soup: BeautifulSoup,
+    row,
+    session: requests.Session | None = None,
+) -> dict:
+    event_target = _bologna_row_detail_event_target(row)
+    if not event_target:
+        return {}
+
+    post_data = _hidden_form_payload(courses_soup)
+    post_data['__EVENTTARGET'] = event_target
+    post_data['__EVENTARGUMENT'] = ''
+
+    try:
+        client = session or requests.Session()
+        response = client.post(
+            courses_url,
+            data=post_data,
+            headers={**HEADERS, 'Referer': courses_url},
+            timeout=20,
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logger.warning("Could not fetch Bologna course detail from %s: %s", courses_url, exc)
+        return {}
+
+    detail_soup = BeautifulSoup(response.content, 'html.parser')
+    detail_text = _clean_bologna_detail_text(detail_soup)
+    if not detail_text:
+        return {}
+
+    return {
+        'detail_url': response.url,
+        'detail_text': detail_text,
+    }
 
 
 def _search_targeted_course_pages(
@@ -1515,6 +1595,15 @@ def _search_targeted_course_pages(
     if not candidates:
         return []
 
+    if '(' not in display_name and 'ikinci' not in _ascii_fold(display_name):
+        regular_candidates = [
+            candidate for candidate in candidates
+            if '(i' not in _ascii_fold(f"{candidate.department} {candidate.program_name}")
+            and 'ikinci ogretim' not in _ascii_fold(f"{candidate.department} {candidate.program_name}")
+        ]
+        if regular_candidates:
+            candidates = regular_candidates
+
     results = []
     for program in candidates:
         for course_code in course_codes:
@@ -1529,9 +1618,11 @@ def _search_targeted_course_pages(
                 f"Tür: {details['kind']}",
                 f"AKTS: {details['akts']}",
                 f"Öğretim Şekli: {details['teaching_mode']}",
+                '',
+                details.get('detail_text', ''),
             ]).strip()
             results.append({
-                'url': details['url'],
+                'url': details.get('detail_url') or details['url'],
                 'title': f"{display_name} {details['code']} Ders Bilgisi",
                 'text': content,
             })
