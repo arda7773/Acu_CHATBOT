@@ -100,6 +100,22 @@ HEAD_KEYWORDS = {
     'program baskani', 'chair', 'head of department', 'director',
 }
 
+COURSE_CODE_PREFIX_MAP = {
+    'CSE': 'bilgisayar mühendisliği',
+    'MBG': 'moleküler biyoloji ve genetik',
+    'PSY': 'psikoloji',
+    'NUR': 'hemşirelik',
+    'PHR': 'eczacılık',
+    'BME': 'biyomedikal mühendisliği',
+    'NTD': 'beslenme ve diyetetik',
+    'BCP': 'bilgisayar programcılığı',
+    'MED': 'tıp',
+    'ECZ': 'eczacılık',
+    'PSI': 'psikoloji',
+    'HEM': 'hemşirelik',
+    'BES': 'beslenme ve diyetetik',
+}
+
 DEPARTMENT_ALIASES = {
     'Bilgisayar Mühendisliği': (
         'bilgisayar mühendisliği', 'bilgisayar muhendisligi',
@@ -173,7 +189,7 @@ def _ascii_fold(text: str) -> str:
     replacements = str.maketrans({
         'ç': 'c', 'ğ': 'g', 'ı': 'i', 'İ': 'i', 'ö': 'o', 'ş': 's', 'ü': 'u',
     })
-    return normalize_text(text).translate(replacements)
+    return normalize_text(text).translate(replacements).replace('\u0307', '')
 
 
 def _normalize_compact(text: str) -> str:
@@ -390,6 +406,17 @@ def stem_turkish(word: str) -> str:
         if word.endswith(suffix) and len(word) - len(suffix) >= 4:
             return word[:-len(suffix)]
     return word
+
+
+def _department_from_course_codes(course_codes: list[str]) -> str:
+    """Infer the department name from known course code prefixes (e.g. CSE → bilgisayar mühendisliği)."""
+    for code in course_codes:
+        prefix_match = re.match(r'^([A-Z]+)', code.upper())
+        if prefix_match:
+            dept = COURSE_CODE_PREFIX_MAP.get(prefix_match.group(1), '')
+            if dept:
+                return dept
+    return ''
 
 
 def is_listing_question(text: str) -> bool:
@@ -637,6 +664,12 @@ def _format_course_code(code: str) -> str:
     return f"{match.group(1)} {match.group(2)}"
 
 
+def _course_code_variants(code: str) -> set[str]:
+    formatted = _format_course_code(code)
+    compact = re.sub(r'[\s-]+', '', formatted)
+    return {variant for variant in (formatted, compact) if variant}
+
+
 def extract_named_entities(question: str) -> dict[str, list[str]]:
     normalized = normalize_text(question)
     faculty_hits = []
@@ -673,7 +706,12 @@ INTENT_EXCHANGE     = 'exchange'
 _INTENT_SIGNALS: dict[str, list[str]] = {
     INTENT_BOLOGNA: [
         'bologna', 'obs.acibadem', 'akts', 'ects', 'ders planı', 'müfredat',
-        'program çıktıları', 'öğrenme çıktıları',
+        'program çıktıları', 'öğrenme çıktıları', 'bilgi paketi',
+        'mezuniyet koşulları', 'mezuniyet şartları', 'program yeterlilikleri',
+        'yeterlilikleri', 'istihdam olanakları', 'alınacak derece',
+        'çalışabilir', 'calisabilir', 'istihdam', 'kariyer',
+        'mezun olunca', 'mezun iş', 'nerede çalış', 'nerede calis',
+        'iş imkânı', 'is imkani', 'iş olanağı', 'is olanagi',
     ],
     INTENT_STAFF: [
         'akademik kadro', 'öğretim üyesi', 'hocalar', 'hoca', 'ogretim uyesi',
@@ -904,6 +942,130 @@ def expand_query(question: str, intent: str) -> str:
         return question
     unique_terms = list(dict.fromkeys(terms))
     return question + ' ' + ' '.join(unique_terms)
+
+
+def _looks_like_bologna_detail_question(question: str) -> bool:
+    normalized = _ascii_fold(question)
+    detail_terms = (
+        'bologna', 'bilgi paketi', 'akts', 'ects', 'ders plani', 'mufredat',
+        'mezuniyet kosullari', 'mezuniyet sartlari', 'program yeterlilikleri',
+        'program cikt', 'ogrenme cikt', 'istihdam olanaklari', 'alinacak derece',
+        'kabul kosullari', 'ust kademeye gecis',
+        'calisabilir', 'istihdam', 'kariyer', 'is imkani', 'is olanagi',
+        'nerede calis', 'mezun olunca', 'mezun is',
+    )
+    return any(term in normalized for term in detail_terms)
+
+
+def _bologna_section_terms(question: str) -> list[str]:
+    normalized = _ascii_fold(question)
+    terms: list[str] = []
+    if 'mezuniyet' in normalized:
+        terms.extend(['Mezuniyet Koşulları', 'Mezuniyet Şartları'])
+    if 'akts' in normalized or 'ects' in normalized:
+        terms.extend(['Mezuniyet Koşulları', 'Toplam AKTS', 'AKTS'])
+    if 'program yeterlilik' in normalized or 'yeterlilikleri' in normalized or 'program cikt' in normalized:
+        terms.extend(['Program Yeterlilikleri', 'Program Çıktıları', 'Öğrenme Çıktıları'])
+    if 'istihdam' in normalized or 'calisabilir' in normalized or 'çalışabilir' in normalized:
+        terms.extend(['İstihdam Olanakları', 'Mezun İstihdam Olanakları'])
+    if 'ders' in normalized or 'mufredat' in normalized or 'ders plani' in normalized:
+        terms.extend(['Dersler', 'Ders Planı', 'Ders Kodu'])
+    if 'kabul' in normalized:
+        terms.extend(['Kabul Koşulları'])
+    if 'derece' in normalized:
+        terms.extend(['Alınacak Derece'])
+    return list(dict.fromkeys(terms))
+
+
+def _extract_bologna_section_snippet(content: str, question: str, max_chars: int = 2600) -> str:
+    if not content:
+        return ''
+
+    search_terms = _bologna_section_terms(question) or extract_keywords(question)
+    folded_content = _ascii_fold(content)
+    windows: list[str] = []
+
+    for term in search_terms:
+        folded_term = _ascii_fold(term)
+        idx = folded_content.find(folded_term)
+        if idx < 0:
+            continue
+
+        # Prefer bounded Bologna sections when the scraper inserted section headers.
+        section_start = content.rfind('--- ', 0, idx)
+        start = section_start if section_start >= 0 and idx - section_start < 2500 else max(0, idx - 700)
+        next_section = content.find('\n\n--- ', idx + len(term))
+        end = next_section if next_section > idx else min(len(content), idx + 1500)
+        windows.append(content[start:end].strip())
+        if len(windows) >= 2:
+            break
+
+    if not windows:
+        return extract_relevant_snippet(content, extract_keywords(question), max_chars=max_chars)
+
+    snippet = '\n\n'.join(dict.fromkeys(windows))
+    return snippet[:max_chars]
+
+
+def _search_targeted_bologna_program_sections(
+    question: str,
+    department: str,
+    max_results: int = 2,
+) -> list[dict]:
+    from scraper.models import BolognaProgram
+
+    if not department:
+        return []
+
+    dept_display = _department_display_name(department)
+    dept_folded = _ascii_fold(dept_display)
+    question_folded = _ascii_fold(question)
+    wants_english = 'ingilizce' in question_folded or 'ngilizce' in question_folded or 'english' in question_folded
+    wants_graduate = any(term in question_folded for term in (
+        'yuksek lisans', 'tezli yuksek lisans', 'doktora', 'master', 'phd',
+    ))
+
+    candidates = []
+    for program in BolognaProgram.objects.exclude(content=''):
+        haystack = f"{program.faculty} {program.department} {program.program_name}"
+        if dept_folded not in _ascii_fold(haystack):
+            continue
+        if wants_english and 'ingilizce' not in _ascii_fold(haystack) and 'english' not in _ascii_fold(haystack):
+            continue
+
+        snippet = _extract_bologna_section_snippet(program.content, question)
+        if not snippet:
+            continue
+
+        score = 0
+        title_folded = _ascii_fold(haystack)
+        if dept_folded in title_folded:
+            score += 10
+        if wants_english and ('ingilizce' in title_folded or 'english' in title_folded):
+            score += 5
+        if not wants_graduate:
+            if 'lisans -' in title_folded and 'yuksek lisans' not in title_folded:
+                score += 6
+            if 'yuksek lisans' in title_folded or 'doktora' in title_folded:
+                score -= 8
+        elif 'yuksek lisans' in title_folded or 'doktora' in title_folded:
+            score += 4
+        if 'muhendislik ve doga bilimleri' in title_folded:
+            score += 2
+        if any(_ascii_fold(term) in _ascii_fold(snippet) for term in _bologna_section_terms(question)):
+            score += 5
+
+        candidates.append((score, program, snippet))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [
+        {
+            'title': f"{program.faculty} - {program.program_name}",
+            'text': snippet,
+            'url': program.url,
+        }
+        for _, program, snippet in candidates[:max_results]
+    ]
 
 
 def extract_relevant_snippet(text: str, keywords: list[str], max_chars: int = 1600) -> str:
@@ -1573,6 +1735,213 @@ def _fetch_bologna_course_detail(
     }
 
 
+def _extract_scraped_course_detail(content: str, course_code: str) -> tuple[str, str]:
+    formatted_code = re.escape(_format_course_code(course_code))
+    header_pattern = re.compile(
+        rf'--- DERS BİLGİ PAKETİ:\s*{formatted_code}\s*-\s*(.*?)\s*---',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    match = header_pattern.search(content or '')
+    if not match:
+        return '', ''
+
+    start = match.start()
+    next_match = re.search(r'\n\n--- DERS BİLGİ PAKETİ:', content[match.end():])
+    end = match.end() + next_match.start() if next_match else len(content)
+    section = content[start:end].strip()
+    title = re.sub(r'\s+', ' ', match.group(1)).strip()
+    return title, section
+
+
+def _iter_scraped_course_detail_sections(content: str):
+    header_pattern = re.compile(
+        r'--- DERS BİLGİ PAKETİ:\s*([A-Z]{2,4}\s*\d{3,4})\s*-\s*(.*?)\s*---',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    matches = list(header_pattern.finditer(content or ''))
+    for index, match in enumerate(matches):
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        code = _format_course_code(match.group(1))
+        title = re.sub(r'\s+', ' ', match.group(2)).strip()
+        yield code, title, content[start:end].strip()
+
+
+def _source_url_from_scraped_course_detail(section: str, fallback_url: str) -> str:
+    match = re.search(r'Kaynak:\s*(https?://\S+)', section or '')
+    if not match:
+        return fallback_url
+    return match.group(1).rstrip('.,)')
+
+
+def _scraped_course_detail_date_key(section: str) -> tuple[int, int, int]:
+    matches = re.findall(r'\b(\d{2})\.(\d{2})\.(\d{4})\b', section or '')
+    if not matches:
+        return (0, 0, 0)
+    dates = []
+    for day, month, year in matches:
+        dates.append((int(year), int(month), int(day)))
+    return max(dates)
+
+
+def _search_scraped_course_detail_pages(
+    department: str,
+    course_codes: list[str],
+    max_results: int = 3,
+) -> list[dict]:
+    from scraper.models import BolognaProgram
+
+    if not course_codes:
+        return []
+
+    display_name = _department_display_name(department) if department else ''
+    aliases = _get_department_aliases().get(display_name, (display_name.lower(),)) if display_name else ()
+
+    query = Q()
+    code_query = Q()
+    for code in course_codes:
+        for variant in _course_code_variants(code):
+            code_query |= Q(content__icontains=variant)
+    query &= code_query
+
+    if aliases:
+        department_query = Q()
+        for alias in aliases:
+            department_query |= Q(program_name__icontains=alias)
+            department_query |= Q(department__icontains=alias)
+            department_query |= Q(faculty__icontains=alias)
+        narrowed = list(BolognaProgram.objects.exclude(content='').filter(query & department_query))
+        candidates = narrowed or list(BolognaProgram.objects.exclude(content='').filter(query))
+    else:
+        candidates = list(BolognaProgram.objects.exclude(content='').filter(query))
+
+    if not candidates:
+        return []
+
+    if display_name and '(' not in display_name and 'ikinci' not in _ascii_fold(display_name):
+        regular_candidates = [
+            candidate for candidate in candidates
+            if '(i' not in _ascii_fold(f"{candidate.department} {candidate.program_name}")
+            and 'ikinci ogretim' not in _ascii_fold(f"{candidate.department} {candidate.program_name}")
+        ]
+        if regular_candidates:
+            candidates = regular_candidates
+
+    results_by_code: dict[str, list[dict]] = {}
+    seen_sections = set()
+    for program in candidates:
+        for course_code in course_codes:
+            course_name, section = _extract_scraped_course_detail(program.content, course_code)
+            if not section:
+                continue
+            dedupe_key = (_format_course_code(course_code), course_name, section[:500])
+            if dedupe_key in seen_sections:
+                continue
+            seen_sections.add(dedupe_key)
+            result = {
+                'url': _source_url_from_scraped_course_detail(section, program.url),
+                'title': (
+                    f"{program.faculty} - {program.program_name} "
+                    f"{_format_course_code(course_code)} Ders Bilgisi"
+                ).strip(),
+                'text': section,
+                '_date_key': _scraped_course_detail_date_key(section),
+            }
+            results_by_code.setdefault(_format_course_code(course_code), []).append(result)
+
+    results = []
+    for code in [_format_course_code(course_code) for course_code in course_codes]:
+        code_results = results_by_code.get(code, [])
+        code_results.sort(key=lambda item: item['_date_key'], reverse=True)
+        results.extend(code_results[:1])
+
+    for result in results:
+        result.pop('_date_key', None)
+    return results[:max_results]
+
+
+def _course_name_query_terms(question: str) -> list[str]:
+    terms = []
+    for keyword in extract_keywords(question):
+        folded = _ascii_fold(keyword)
+        if len(folded) < 4:
+            continue
+        if folded in {
+            'ders', 'dersi', 'dersin', 'dersinin', 'icerik', 'icerigi',
+            'nedir', 'hangi', 'bilgi', 'paketi', 'akts', 'kredi',
+        }:
+            continue
+        terms.append(keyword)
+    return list(dict.fromkeys(terms))
+
+
+def _search_scraped_course_detail_by_name(
+    question: str,
+    department: str = '',
+    max_results: int = 3,
+) -> list[dict]:
+    from scraper.models import BolognaProgram
+
+    terms = _course_name_query_terms(question)
+    if not terms:
+        return []
+
+    display_name = _department_display_name(department) if department else ''
+    aliases = _get_department_aliases().get(display_name, (display_name.lower(),)) if display_name else ()
+
+    query = Q()
+    for term in terms:
+        query |= Q(content__icontains=term)
+
+    if aliases:
+        department_query = Q()
+        for alias in aliases:
+            department_query |= Q(program_name__icontains=alias)
+            department_query |= Q(department__icontains=alias)
+            department_query |= Q(faculty__icontains=alias)
+        narrowed = list(BolognaProgram.objects.exclude(content='').filter(query & department_query))
+        candidates = narrowed or list(BolognaProgram.objects.exclude(content='').filter(query))
+    else:
+        candidates = list(BolognaProgram.objects.exclude(content='').filter(query))
+
+    folded_terms = [_ascii_fold(term) for term in terms]
+    scored = []
+    seen_sections = set()
+    for program in candidates:
+        for code, course_name, section in _iter_scraped_course_detail_sections(program.content):
+            haystack = _ascii_fold(f"{code} {course_name}")
+            score = sum(1 for term in folded_terms if term in haystack)
+            if score <= 0:
+                continue
+            dedupe_key = (code, course_name, section[:500])
+            if dedupe_key in seen_sections:
+                continue
+            seen_sections.add(dedupe_key)
+            result = {
+                'url': _source_url_from_scraped_course_detail(section, program.url),
+                'title': f"{program.faculty} - {program.program_name} {code} Ders Bilgisi".strip(),
+                'text': section,
+                '_date_key': _scraped_course_detail_date_key(section),
+            }
+            scored.append((score, result))
+
+    scored.sort(key=lambda item: (item[0], item[1]['_date_key']), reverse=True)
+    results = []
+    seen_codes = set()
+    for _, result in scored:
+        code_match = re.search(r'\b[A-Z]{2,4}\s+\d{3,4}\b', result['title'])
+        code = code_match.group(0) if code_match else result['title']
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+        result.pop('_date_key', None)
+        results.append(result)
+        if len(results) >= max_results:
+            break
+
+    return results
+
+
 def _search_targeted_course_pages(
     department: str,
     course_codes: list[str],
@@ -2119,8 +2488,12 @@ def _exact_match_score(chunk: dict, keywords: list[str], entities: dict[str, lis
     score = 0.0
 
     for code in entities['course_codes']:
-        code_lower = code.lower()
-        if code_lower in text or code_lower in title or code_lower == meta['course_code'].lower():
+        variants = {variant.lower() for variant in _course_code_variants(code)}
+        compact_meta_code = re.sub(r'[\s-]+', '', meta['course_code'].lower())
+        if (
+            any(variant in text or variant in title for variant in variants)
+            or compact_meta_code in variants
+        ):
             score += 1.0
 
     for faculty in entities['faculties']:
@@ -2356,13 +2729,43 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
         if context_parts:
             return '\n\n'.join(context_parts), sources
 
-    if intent in (INTENT_COURSE, INTENT_BOLOGNA) and target_department and entities['course_codes']:
+    if entities['course_codes']:
+        effective_dept = target_department or _department_from_course_codes(entities['course_codes'])
         logger.info(
             "[RETRIEVAL] targeted course lookup for department=%s course_codes=%s",
-            target_department,
+            effective_dept or 'any',
             entities['course_codes'],
         )
-        for result in search_scraped_pages(question, max_results=3):
+        course_results = _search_scraped_course_detail_pages(
+            effective_dept,
+            entities['course_codes'],
+            max_results=3,
+        )
+        if not course_results and effective_dept:
+            course_results = _search_targeted_course_pages(
+                effective_dept,
+                entities['course_codes'],
+                max_results=3,
+            )
+        for result in course_results:
+            if result['url'] in sources:
+                continue
+            context_parts.append(f"=== {result['title']} ===\n{result['text']}")
+            sources.append(result['url'])
+        if context_parts:
+            return '\n\n'.join(context_parts), sources
+
+    if intent == INTENT_COURSE:
+        effective_dept = target_department
+        logger.info(
+            "[RETRIEVAL] targeted course-name lookup for department=%s",
+            effective_dept or 'any',
+        )
+        for result in _search_scraped_course_detail_by_name(
+            question,
+            effective_dept,
+            max_results=3,
+        ):
             if result['url'] in sources:
                 continue
             context_parts.append(f"=== {result['title']} ===\n{result['text']}")
@@ -2404,6 +2807,19 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
     if intent == INTENT_ADMISSION and _is_fee_question(question):
         logger.info("[RETRIEVAL] targeted fee lookup")
         for result in _search_targeted_fee_pages(question):
+            if result['url'] in sources:
+                continue
+            context_parts.append(f"=== {result['title']} ===\n{result['text']}")
+            sources.append(result['url'])
+        if context_parts:
+            return '\n\n'.join(context_parts), sources
+
+    if target_department and (intent == INTENT_BOLOGNA or _looks_like_bologna_detail_question(question)):
+        logger.info(
+            "[RETRIEVAL] targeted Bologna section lookup for department=%s",
+            target_department,
+        )
+        for result in _search_targeted_bologna_program_sections(question, target_department, max_results=1):
             if result['url'] in sources:
                 continue
             context_parts.append(f"=== {result['title']} ===\n{result['text']}")
