@@ -34,6 +34,11 @@ _COURSE_DETAIL_TERMS = (
     'course content', 'course details',
 )
 
+_ACADEMIC_TITLES = (
+    'Prof. Dr.', 'Doç. Dr.', 'Dr. Öğr. Üyesi', 'Öğr. Gör. Dr.',
+    'Arş. Gör.', 'Uzman Dr.', 'Öğr. Gör.',
+)
+
 
 def build_context_fallback(context: str) -> str:
     lines = [line.strip() for line in context.splitlines() if line.strip()]
@@ -96,6 +101,19 @@ def _normalise_for_match(text: str) -> str:
 def _is_course_detail_question(question: str) -> bool:
     lowered = _normalise_for_match(question)
     return any(_normalise_for_match(term) in lowered for term in _COURSE_DETAIL_TERMS)
+
+
+def _is_staff_list_question(question: str) -> bool:
+    lowered = _normalise_for_match(question)
+    return any(term in lowered for term in (
+        'akademik kadro', 'hocalar', 'hoca', 'ogretim uyesi',
+        'ogretim uyeleri', 'kimler var', 'faculty members',
+    ))
+
+
+def _is_bologna_process_question(question: str) -> bool:
+    lowered = _normalise_for_match(question)
+    return 'bologna' in lowered and ('surec' in lowered or 'nedir' in lowered)
 
 
 def _next_value(lines: list[str], label: str) -> str:
@@ -198,6 +216,103 @@ def _direct_course_detail_answer(question: str, context: str) -> str:
     return '\n'.join(answer_lines)
 
 
+def _looks_like_person_name(text: str) -> bool:
+    if not text or len(text) < 5:
+        return False
+    if any(char.isdigit() for char in text):
+        return False
+    folded = _normalise_for_match(text)
+    blocked = {
+        'akademik kadro', 'akademisyen adi', 'tanitim katalogu', 'sanal tur',
+        'sor', 'cevaplayalim', 'temel tip bilimleri', 'dahili tip bilimleri',
+        'cerrahi tip bilimleri',
+    }
+    if folded in blocked:
+        return False
+    words = text.replace('-', ' ').split()
+    return len(words) >= 2 and any(char.isupper() for char in text)
+
+
+def _direct_staff_answer(question: str, context: str) -> str:
+    if not _is_staff_list_question(question):
+        return ''
+    if 'Akademik Kadro' not in context and 'Akademisyen Adı' not in context:
+        return ''
+
+    lines = [line.strip() for line in context.splitlines() if line.strip()]
+    staff = []
+    seen = set()
+    pending_head = False
+    title = ''
+    title_set = set(_ACADEMIC_TITLES)
+
+    for line in lines:
+        if line.startswith('==='):
+            pending_head = False
+            title = ''
+            continue
+
+        if line == 'Anabilim Dalı Başkanı':
+            pending_head = True
+            continue
+
+        if line in title_set:
+            title = line
+            continue
+
+        if line == '(*)':
+            continue
+
+        if title and _looks_like_person_name(line):
+            prefix = 'Anabilim Dalı Başkanı ' if pending_head else ''
+            item = f"{prefix}{title} {line}"
+            key = _normalise_for_match(item)
+            if key not in seen:
+                seen.add(key)
+                staff.append(item)
+            pending_head = False
+            title = ''
+
+    if not staff:
+        return ''
+
+    answer_lines = [
+        f"Elimdeki akademik kadro kaydına göre listede {len(staff)} kişi görünüyor:",
+        '',
+    ]
+    answer_lines.extend(f"{index}. {name}" for index, name in enumerate(staff, 1))
+    return '\n'.join(answer_lines)
+
+
+def _direct_bologna_process_answer(question: str, context: str) -> str:
+    if not _is_bologna_process_question(question):
+        return ''
+    if 'Bologna Süreci Nedir?' not in context:
+        return ''
+
+    marker = 'Bologna Süreci Nedir?'
+    section = context.split(marker, 1)[1]
+    section = section.split('\n===', 1)[0]
+    lines = [line.strip() for line in section.splitlines() if line.strip()]
+    if not lines:
+        return ''
+
+    paragraphs = []
+    current = []
+    for line in lines:
+        current.append(line)
+        if line.endswith(('.', ':')):
+            paragraphs.append(' '.join(current))
+            current = []
+    if current:
+        paragraphs.append(' '.join(current))
+
+    answer = '\n\n'.join(paragraphs[:4]).strip()
+    if not answer:
+        return ''
+    return f"Bologna Süreci hakkında kaynakta yer alan bilgi şöyle:\n\n{answer}"
+
+
 def _is_address_question(question: str) -> bool:
     lowered = question.lower()
     return any(term in lowered for term in (
@@ -271,6 +386,14 @@ def get_answer(question: str, context: str) -> str:
     direct_course_answer = _direct_course_detail_answer(question, context)
     if direct_course_answer:
         return direct_course_answer
+
+    direct_staff_answer = _direct_staff_answer(question, context)
+    if direct_staff_answer:
+        return direct_staff_answer
+
+    direct_bologna_answer = _direct_bologna_process_answer(question, context)
+    if direct_bologna_answer:
+        return direct_bologna_answer
 
     user_message = f"""Aşağıdaki BAĞLAM, Acıbadem Üniversitesi veri tabanından alınan ilgili bilgi parçalarını içermektedir.
 
@@ -361,6 +484,16 @@ def stream_answer(question: str, context: str) -> Iterator[str]:
     direct_course_answer = _direct_course_detail_answer(question, context)
     if direct_course_answer:
         yield direct_course_answer
+        return
+
+    direct_staff_answer = _direct_staff_answer(question, context)
+    if direct_staff_answer:
+        yield direct_staff_answer
+        return
+
+    direct_bologna_answer = _direct_bologna_process_answer(question, context)
+    if direct_bologna_answer:
+        yield direct_bologna_answer
         return
 
     user_message = f"""Aşağıdaki BAĞLAM, Acıbadem Üniversitesi veri tabanından alınan ilgili bilgi parçalarını içermektedir.

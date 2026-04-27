@@ -1529,7 +1529,7 @@ def _search_targeted_staff_pages(department: str, max_results: int = 3) -> list[
         results.append({
             'url': page.url,
             'title': f"{title_prefix} Akademik Kadro",
-            'text': page.text[:2200],
+            'text': page.text[:40000],
         })
         if len(results) >= max_results:
             break
@@ -2775,7 +2775,7 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
 
     if intent == INTENT_STAFF and target_department:
         logger.info("[RETRIEVAL] targeted staff lookup for department=%s", target_department)
-        for result in search_scraped_pages(question, max_results=3):
+        for result in search_scraped_pages(question, max_results=1):
             if result['url'] in sources:
                 continue
             context_parts.append(f"=== {result['title']} ===\n{result['text']}")
