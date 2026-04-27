@@ -32,7 +32,6 @@ The system uses:
 ACU_ChatBot/
 ├── docker-compose.yml
 ├── k8s/
-├── .env.example
 ├── README.md
 ├── docs/
 └── webapp/
@@ -79,7 +78,7 @@ No paid external AI API is required.
 
 ## Environment Variables
 
-Create a `.env` file in the project root. Example:
+Create a `.env` file in the project root. Environment files are intentionally ignored by Git because they can contain local credentials. Example:
 
 ```env
 POSTGRES_DB=acuchatbot
@@ -90,7 +89,7 @@ DEBUG=True
 OLLAMA_MODEL=llama3.1:8b
 ```
 
-You can start from `.env.example`.
+Do not commit `.env` or `.env.example` files.
 
 ## Setup and Run
 

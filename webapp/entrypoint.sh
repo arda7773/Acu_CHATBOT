@@ -8,6 +8,7 @@ WAIT_FOR_OLLAMA="${WAIT_FOR_OLLAMA:-true}"
 LOAD_SEED_DATA="${LOAD_SEED_DATA:-true}"
 PULL_MODELS_ON_START="${PULL_MODELS_ON_START:-true}"
 OLLAMA_URL="${OLLAMA_URL:-http://ollama:11434}"
+USE_DJANGO_RUNSERVER="${USE_DJANGO_RUNSERVER:-false}"
 
 echo "=== ACU ChatBot Starting ==="
 
@@ -61,6 +62,11 @@ if [ "$PULL_MODELS_ON_START" = "true" ]; then
   python manage.py pull_model &
 else
   echo "[7/7] Skipping model pull."
+fi
+
+if [ "$USE_DJANGO_RUNSERVER" = "true" ]; then
+  echo "=== Starting Django development server on port 8000 ==="
+  exec python manage.py runserver 0.0.0.0:8000
 fi
 
 echo "=== Starting Gunicorn on port 8000 ==="
