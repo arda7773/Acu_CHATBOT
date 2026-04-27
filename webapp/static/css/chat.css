@@ -799,9 +799,7 @@ body.sidebar-collapsed .sidebar {
 }
 
 .user-avatar {
-    background: linear-gradient(135deg, var(--primary-light), var(--primary));
-    color: white;
-    box-shadow: 0 2px 6px rgba(26,58,107,0.3);
+    display: none;
 }
 
 .bot-avatar {
