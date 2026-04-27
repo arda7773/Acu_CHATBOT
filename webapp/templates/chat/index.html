@@ -24,7 +24,9 @@
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <div class="logo-area">
-                    <div class="logo-icon">ACU</div>
+                    <div class="logo-icon">
+                        <img src="/static/images/AcibademUniLogoOrjinal-Photoroom.png">
+                    </div>
                     <div class="logo-text">
                         <span class="logo-title">AI Asistan</span>
                         <span class="logo-sub">Acıbadem Üniversitesi</span>
@@ -48,7 +50,7 @@
 
                 {% if recent_sessions %}
                 <div class="sidebar-section">
-                    <div class="sidebar-section-title">GGeçmiş Sohbetler</div>
+                    <div class="sidebar-section-title">Geçmiş Sohbetler</div>
                     <div class="history-list">
                     {% for s in recent_sessions %}
                     <div class="history-item" data-session-id="{{ s.id }}">
@@ -124,10 +126,10 @@
             <div class="messages-area" id="messages-area">
                 {% if not messages %}
                 <div class="welcome-card" id="welcome-card">
-                    <div class="welcome-orbit welcome-orbit-left" aria-hidden="true">✨</div>
-                    <div class="welcome-orbit welcome-orbit-right" aria-hidden="true">🎓</div>
-                    <div class="welcome-eyebrow">ACU Bilgi Asistanı</div>
-                    <div class="welcome-icon-wrap">ACU</div>
+                    <div class="welcome-eyebrow">ACU Asistan</div>
+                    <div class="welcome-icon-wrap">
+                        <img src="/static/images/AcibademUniLogoOrjinal-Photoroom.png" alt="ACU Logo">
+                    </div>
                     <h2>Acıbadem Üniversitesi<br>AI Asistanı</h2>
                     <p>Üniversite hakkında merak ettiğiniz her şeyi sorabilirsiniz.<br>
                     Akademik programlar, bölümler, kabul koşulları, kampüs ve daha fazlası.</p>
@@ -182,7 +184,7 @@
                 </div>
                 <!-- Bot message -->
                 <div class="message bot-message" data-message-id="{{ msg.id }}" data-role="bot">
-                    <div class="message-avatar bot-avatar">AI</div>
+                    <div class="message-avatar bot-avatar"><span></span><span></span><span></span></div>
                     <div class="message-bubble bot-bubble">
                         <div class="message-text">{{ msg.answer }}</div>
                         {% if msg.sources %}
@@ -211,16 +213,11 @@
                     </div>
                 </div>
                 {% endfor %}
-            </div>
 
-            <!-- Typing indicator -->
-            <div class="typing-indicator" id="typing-indicator">
-                <div class="message bot-message">
-                    <div class="message-avatar bot-avatar">AI</div>
-                    <div class="message-bubble bot-bubble">
-                        <div class="typing-dots">
-                            <span></span><span></span><span></span>
-                        </div>
+                <!-- Typing indicator -->
+                <div class="typing-indicator" id="typing-indicator">
+                    <div class="message bot-message">
+                        <div class="message-avatar bot-avatar"><span></span><span></span><span></span></div>
                     </div>
                 </div>
             </div>
@@ -592,7 +589,8 @@
 
             const avatar = document.createElement('div');
             avatar.className = `message-avatar ${isUser ? 'user-avatar' : 'bot-avatar'}`;
-            avatar.textContent = isUser ? 'S' : 'AI';
+            if (isUser) { avatar.textContent = 'S'; }
+            else { avatar.innerHTML = '<span></span><span></span><span></span>'; }
 
             const bubble = document.createElement('div');
             bubble.className = `message-bubble ${isUser ? 'user-bubble' : 'bot-bubble'}`;
@@ -654,7 +652,7 @@
             bubble.appendChild(footer);
             wrapper.appendChild(avatar);
             wrapper.appendChild(bubble);
-            messagesArea.appendChild(wrapper);
+            messagesArea.insertBefore(wrapper, typingIndicator);
 
             if (isNearBottom()) scrollToBottom();
             return { wrapper, bubble, textEl, footer };
@@ -783,7 +781,7 @@
             }
             setStatus('loading');
             typingIndicator.classList.add('visible');
-            if (isNearBottom()) scrollToBottom();
+            scrollToBottom();
 
             try {
                 const abortController = new AbortController();
