@@ -28,6 +28,12 @@ FALLBACK_ANSWER = (
     "https://www.acibadem.edu.tr adresini ziyaret edebilir veya üniversiteyle iletişime geçebilirsiniz."
 )
 
+_COURSE_DETAIL_TERMS = (
+    'ders içeriği', 'ders icerigi', 'dersinin içeriği', 'dersinin icerigi',
+    'dersin içeriği', 'dersin icerigi', 'ders hakkında', 'ders hakkinda',
+    'course content', 'course details',
+)
+
 
 def build_context_fallback(context: str) -> str:
     lines = [line.strip() for line in context.splitlines() if line.strip()]
@@ -78,6 +84,118 @@ def is_low_quality_answer(answer: str) -> bool:
         'bağlam bilgisi mevcut değil',
     ]
     return any(pattern in lowered for pattern in bad_patterns)
+
+
+def _normalise_for_match(text: str) -> str:
+    replacements = str.maketrans({
+        'ç': 'c', 'ğ': 'g', 'ı': 'i', 'İ': 'i', 'ö': 'o', 'ş': 's', 'ü': 'u',
+    })
+    return text.lower().translate(replacements)
+
+
+def _is_course_detail_question(question: str) -> bool:
+    lowered = _normalise_for_match(question)
+    return any(_normalise_for_match(term) in lowered for term in _COURSE_DETAIL_TERMS)
+
+
+def _next_value(lines: list[str], label: str) -> str:
+    folded_label = _normalise_for_match(label)
+    for index, line in enumerate(lines):
+        if _normalise_for_match(line) != folded_label:
+            continue
+        for candidate in lines[index + 1:]:
+            if candidate and _normalise_for_match(candidate) != folded_label:
+                return candidate
+    return ''
+
+
+def _section_value(lines: list[str], label: str, stop_labels: tuple[str, ...]) -> str:
+    folded_label = _normalise_for_match(label)
+    folded_stops = {_normalise_for_match(stop) for stop in stop_labels}
+    for index, line in enumerate(lines):
+        if _normalise_for_match(line) != folded_label:
+            continue
+
+        values = []
+        for candidate in lines[index + 1:]:
+            folded = _normalise_for_match(candidate)
+            if folded in folded_stops:
+                break
+            if candidate:
+                values.append(candidate)
+        return ' '.join(values).strip()
+    return ''
+
+
+def _direct_course_detail_answer(question: str, context: str) -> str:
+    """
+    Bologna course-detail pages have a stable label/value structure. For these
+    questions, extracting the answer is more reliable than asking the LLM to
+    infer whether the context is sufficient.
+    """
+    if not _is_course_detail_question(question):
+        return ''
+    if 'DERS BİLGİ PAKETİ' not in context and 'Dersin İçeriği' not in context:
+        return ''
+
+    lines = [line.strip() for line in context.splitlines() if line.strip()]
+    header = next((line for line in lines if 'DERS BİLGİ PAKETİ:' in line), '')
+    code = ''
+    name = ''
+    header_match = re.search(r'DERS BİLGİ PAKETİ:\s*([A-Z]{2,4}\s*\d{3,4})\s*-\s*(.*?)\s*---', header)
+    if header_match:
+        code = re.sub(r'\s+', ' ', header_match.group(1)).strip()
+        name = re.sub(r'\s+', ' ', header_match.group(2)).strip()
+
+    if not code:
+        code = _next_value(lines, 'Kodu')
+    if not name:
+        name = _next_value(lines, 'Adı')
+
+    stop_labels = (
+        'Dersin Yöntem ve Teknikleri', 'Ön Koşulları', 'Dersin Koordinatörü',
+        'Dersi Verenler', 'Dersin Yardımcıları', 'Dersin Staj Durumu',
+        'Ders Kaynakları', 'Ders Yapısı', 'Planlanan Öğrenme Aktiviteleri ve Metodları',
+        'Değerlendirme Ölçütleri', 'AKTS Hesaplama İçeriği',
+        'Dersin Öğrenme Çıktıları', 'Ders Konuları',
+    )
+    content = _section_value(lines, 'Dersin İçeriği', stop_labels)
+    purpose = _section_value(lines, 'Dersin Amacı', ('Dersin İçeriği',) + stop_labels)
+    level = _next_value(lines, 'Dersin Düzeyi')
+    program = _next_value(lines, 'Bölümü / Programı')
+    language = _next_value(lines, 'Dersin Dili')
+    course_type = _next_value(lines, 'Dersin Türü')
+    teaching_mode = _next_value(lines, 'Dersin Öğretim Şekli')
+    coordinator = _next_value(lines, 'Dersin Koordinatörü')
+
+    if not content and not purpose:
+        return ''
+
+    title = ' - '.join(part for part in (code, name) if part)
+    answer_lines = []
+    if title:
+        answer_lines.append(f"{title} dersi için bağlamdaki bilgiler şöyle:")
+    else:
+        answer_lines.append("Bağlamdaki ders bilgileri şöyle:")
+
+    if program:
+        answer_lines.append(f"Program: {program}")
+    if level:
+        answer_lines.append(f"Düzey: {level}")
+    if language:
+        answer_lines.append(f"Ders dili: {language}")
+    if course_type:
+        answer_lines.append(f"Ders türü: {course_type}")
+    if teaching_mode:
+        answer_lines.append(f"Öğretim şekli: {teaching_mode}")
+    if purpose:
+        answer_lines.append(f"Dersin amacı: {purpose}")
+    if content:
+        answer_lines.append(f"Dersin içeriği: {content}")
+    if coordinator:
+        answer_lines.append(f"Dersin koordinatörü: {coordinator}")
+
+    return '\n'.join(answer_lines)
 
 
 def _is_address_question(question: str) -> bool:
@@ -149,6 +267,10 @@ def get_answer(question: str, context: str) -> str:
     if len(context.strip()) < 80:
         logger.warning("Context too short to be useful, returning fallback")
         return FALLBACK_ANSWER
+
+    direct_course_answer = _direct_course_detail_answer(question, context)
+    if direct_course_answer:
+        return direct_course_answer
 
     user_message = f"""Aşağıdaki BAĞLAM, Acıbadem Üniversitesi veri tabanından alınan ilgili bilgi parçalarını içermektedir.
 
@@ -234,6 +356,11 @@ def stream_answer(question: str, context: str) -> Iterator[str]:
     if len(context.strip()) < 80:
         logger.warning("Context too short to be useful, streaming fallback")
         yield FALLBACK_ANSWER
+        return
+
+    direct_course_answer = _direct_course_detail_answer(question, context)
+    if direct_course_answer:
+        yield direct_course_answer
         return
 
     user_message = f"""Aşağıdaki BAĞLAM, Acıbadem Üniversitesi veri tabanından alınan ilgili bilgi parçalarını içermektedir.
