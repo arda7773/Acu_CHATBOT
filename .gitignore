@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example.template
+
+__pycache__/
+*.py[cod]
+
+staticfiles/
