@@ -30,6 +30,12 @@
                         <span class="logo-sub">Acıbadem Üniversitesi</span>
                     </div>
                 </div>
+                <button class="sidebar-close-btn" id="sidebar-close-btn" type="button" title="Kenar çubuğunu kapat" aria-label="Kenar çubuğunu kapat">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="4" width="18" height="16" rx="2"/>
+                        <line x1="9" y1="4" x2="9" y2="20"/>
+                    </svg>
+                </button>
             </div>
 
             <div class="sidebar-body">
@@ -43,6 +49,7 @@
                 {% if recent_sessions %}
                 <div class="sidebar-section">
                     <div class="sidebar-section-title">Geçmiş Sohbetler</div>
+                    <div class="history-list">
                     {% for s in recent_sessions %}
                     <div class="history-item" data-session-id="{{ s.id }}">
                         <a href="{% url 'chat_session' s.id %}" class="history-btn {% if s.active %}active{% endif %}">
@@ -69,12 +76,18 @@
                         </button>
                     </div>
                     {% endfor %}
+                    </div>
+                </div>
+                {% else %}
+                <div class="sidebar-empty">
+                    <span class="sidebar-empty-title">Henüz sohbet yok</span>
+                    <span class="sidebar-empty-text">Yeni bir sohbet başlatınca burada görünecek.</span>
                 </div>
                 {% endif %}
             </div>
 
             <div class="sidebar-footer">
-                <div class="sidebar-footer-badge">{{ ollama_model }} · Yerel Model</div>
+                <div class="sidebar-footer-badge">Sistem hazır</div>
             </div>
         </aside>
 
@@ -83,11 +96,10 @@
             <!-- Top bar -->
             <div class="chat-topbar">
                 <div class="topbar-left">
-                    <button class="hamburger-btn" id="hamburger-btn" aria-label="Menüyü aç">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                            <line x1="3" y1="6" x2="21" y2="6"/>
-                            <line x1="3" y1="12" x2="21" y2="12"/>
-                            <line x1="3" y1="18" x2="21" y2="18"/>
+                    <button class="hamburger-btn" id="hamburger-btn" aria-label="Kenar çubuğunu aç/kapat" title="Kenar çubuğunu aç/kapat">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="4" width="18" height="16" rx="2"/>
+                            <line x1="9" y1="4" x2="9" y2="20"/>
                         </svg>
                     </button>
                     <div class="topbar-status">
@@ -102,14 +114,6 @@
                             {% csrf_token %}
                             <button type="submit" class="logout-btn">Çıkış</button>
                         </form>
-                    </div>
-                    <div class="model-badge">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                            <path d="M2 17l10 5 10-5"/>
-                            <path d="M2 12l10 5 10-5"/>
-                        </svg>
-                        {{ ollama_model }} · Yerel Model
                     </div>
                 </div>
             </div>
@@ -287,6 +291,7 @@
         const sidebar         = document.getElementById('sidebar');
         const overlay         = document.getElementById('sidebar-overlay');
         const hamburgerBtn    = document.getElementById('hamburger-btn');
+        const sidebarCloseBtn = document.getElementById('sidebar-close-btn');
         const toast           = document.getElementById('toast');
         const editBanner      = document.getElementById('edit-banner');
         const editBannerText  = document.getElementById('edit-banner-text');
@@ -328,21 +333,66 @@
 
         scrollBtn.addEventListener('click', () => scrollToBottom());
 
-        /* ─── Sidebar toggle (mobile) ─── */
+        /* ─── Sidebar toggle ─── */
+        function isMobileLayout() {
+            return window.matchMedia('(max-width: 768px)').matches;
+        }
+
         function openSidebar() {
             sidebar.classList.add('open');
-            overlay.classList.add('active');
+            document.body.classList.remove('sidebar-collapsed');
+            hamburgerBtn.setAttribute('aria-expanded', 'true');
+            if (isMobileLayout()) overlay.classList.add('active');
+            localStorage.setItem('acuSidebarCollapsed', 'false');
         }
+
         function closeSidebar() {
             sidebar.classList.remove('open');
             overlay.classList.remove('active');
+            hamburgerBtn.setAttribute('aria-expanded', 'false');
+            if (!isMobileLayout()) {
+                document.body.classList.add('sidebar-collapsed');
+                localStorage.setItem('acuSidebarCollapsed', 'true');
+            }
         }
 
         hamburgerBtn.addEventListener('click', () => {
-            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+            const desktopCollapsed = document.body.classList.contains('sidebar-collapsed');
+            const mobileOpen = sidebar.classList.contains('open');
+            if (isMobileLayout()) {
+                mobileOpen ? closeSidebar() : openSidebar();
+            } else {
+                desktopCollapsed ? openSidebar() : closeSidebar();
+            }
         });
 
+        sidebarCloseBtn.addEventListener('click', closeSidebar);
         overlay.addEventListener('click', closeSidebar);
+
+        function syncSidebarForViewport() {
+            const savedCollapsed = localStorage.getItem('acuSidebarCollapsed') === 'true';
+            if (isMobileLayout()) {
+                document.body.classList.remove('sidebar-collapsed');
+                sidebar.classList.remove('open');
+                overlay.classList.remove('active');
+                hamburgerBtn.setAttribute('aria-expanded', 'false');
+                return;
+            }
+
+            if (savedCollapsed) {
+                document.body.classList.add('sidebar-collapsed');
+                sidebar.classList.remove('open');
+                hamburgerBtn.setAttribute('aria-expanded', 'false');
+            } else {
+                document.body.classList.remove('sidebar-collapsed');
+                sidebar.classList.add('open');
+                hamburgerBtn.setAttribute('aria-expanded', 'true');
+            }
+            overlay.classList.remove('active');
+        }
+
+        syncSidebarForViewport();
+        window.addEventListener('resize', syncSidebarForViewport);
 
         /* ─── Toast ─── */
         let toastTimer;

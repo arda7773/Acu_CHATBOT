@@ -36,7 +36,7 @@
     --radius-lg:       16px;
     --radius-xl:       20px;
     --transition:      0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    --sidebar-w:       270px;
+    --sidebar-w:       292px;
 }
 
 html { height: 100%; }
@@ -60,6 +60,12 @@ body {
     height: 100vh;
     overflow: hidden;
     position: relative;
+}
+
+body.sidebar-collapsed .sidebar {
+    width: 0;
+    transform: translateX(-100%);
+    border-right: none;
 }
 
 /* ─── Sidebar Overlay (mobile) ─── */
@@ -89,12 +95,18 @@ body {
     color: var(--sidebar-text);
     position: relative;
     z-index: 50;
-    transition: transform var(--transition);
+    border-right: 1px solid rgba(255,255,255,0.07);
+    transition: width var(--transition), transform var(--transition);
+    overflow: hidden;
 }
 
 .sidebar-header {
     padding: 20px 18px 16px;
     border-bottom: 1px solid var(--sidebar-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
 }
 
 .logo-area {
@@ -143,6 +155,26 @@ body {
     text-overflow: ellipsis;
 }
 
+.sidebar-close-btn {
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,0.06);
+    color: var(--sidebar-muted);
+    cursor: pointer;
+    transition: background var(--transition), color var(--transition);
+    flex-shrink: 0;
+}
+
+.sidebar-close-btn:hover {
+    background: rgba(255,255,255,0.12);
+    color: #f9fafb;
+}
+
 .sidebar-body {
     flex: 1;
     padding: 14px 12px;
@@ -162,13 +194,13 @@ body {
 .btn-new-chat {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 8px;
     background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.06));
     color: #f9fafb;
     text-decoration: none;
     border-radius: var(--radius-sm);
-    padding: 10px 14px;
+    padding: 11px 13px;
     font-size: 13.5px;
     font-weight: 500;
     transition: background var(--transition), box-shadow var(--transition);
@@ -188,7 +220,14 @@ body {
 .sidebar-section {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 8px;
+    min-height: 0;
+}
+
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
 }
 
 .history-item {
@@ -215,7 +254,7 @@ body {
     color: var(--sidebar-text);
     text-decoration: none;
     text-align: left;
-    padding: 8px 10px;
+    padding: 9px 10px;
     border-radius: var(--radius-sm);
     font-size: 13px;
     cursor: pointer;
@@ -226,12 +265,12 @@ body {
 }
 
 .history-btn:hover {
-    background: var(--sidebar-hover);
+    background: rgba(255,255,255,0.08);
     color: #f9fafb;
 }
 
 .history-btn.active {
-    background: var(--sidebar-active);
+    background: rgba(255,255,255,0.12);
     color: #f9fafb;
 }
 
@@ -271,6 +310,27 @@ body {
     color: #fca5a5;
 }
 
+.sidebar-empty {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 14px 10px;
+    border: 1px dashed rgba(255,255,255,0.12);
+    border-radius: 12px;
+    color: var(--sidebar-muted);
+}
+
+.sidebar-empty-title {
+    color: var(--sidebar-text);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.sidebar-empty-text {
+    font-size: 12px;
+    line-height: 1.45;
+}
+
 .history-delete-btn:disabled {
     opacity: 0.45;
     cursor: wait;
@@ -289,12 +349,13 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    font-size: 10.5px;
+    font-size: 11px;
     color: var(--sidebar-muted);
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 20px;
-    padding: 4px 10px;
+    padding: 5px 10px;
+    font-weight: 600;
 }
 
 .sidebar-footer-badge::before {
@@ -341,20 +402,26 @@ body {
 }
 
 .hamburger-btn {
-    display: none;
-    background: none;
-    border: none;
+    display: flex;
+    background: rgba(255,255,255,0.72);
+    border: 1px solid var(--border);
     cursor: pointer;
     color: var(--text-muted);
-    padding: 6px;
-    border-radius: var(--radius-sm);
-    transition: background var(--transition), color var(--transition);
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 11px;
+    transition: background var(--transition), color var(--transition), border-color var(--transition), box-shadow var(--transition);
     flex-shrink: 0;
 }
 
 .hamburger-btn:hover {
-    background: var(--bg);
+    background: var(--bg-elevated);
+    border-color: rgba(23,51,92,0.20);
     color: var(--text);
+    box-shadow: var(--shadow-sm);
 }
 
 .topbar-status {
@@ -440,23 +507,6 @@ body {
 
 .logout-btn:hover {
     background: rgba(23,51,92,0.14);
-}
-
-.model-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11.5px;
-    color: var(--text-muted);
-    background: rgba(23,51,92,0.04);
-    padding: 5px 11px;
-    border-radius: 20px;
-    border: 1px solid var(--border);
-    white-space: nowrap;
-}
-
-.model-badge svg {
-    color: var(--primary);
 }
 
 /* ─── Messages Area ─── */
@@ -1239,10 +1289,6 @@ textarea::placeholder { color: #9ca3af; }
 
     .welcome-card {
         padding: 36px 24px;
-    }
-
-    .model-badge {
-        display: none;
     }
 
     .user-badge {
