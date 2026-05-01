@@ -226,6 +226,7 @@ BOLOGNA_UNIT_SELECTION_URLS = {
     'Yüksek Lisans': 'https://obs.acibadem.edu.tr/oibs/bologna/unitSelection.aspx?type=yls&lang=tr',
     'Doktora': 'https://obs.acibadem.edu.tr/oibs/bologna/unitSelection.aspx?type=dok&lang=tr',
 }
+BOLOGNA_PROGRAM_TYPE_ORDER = tuple(BOLOGNA_UNIT_SELECTION_URLS)
 
 _CATALOG_CACHE_TTL_SECONDS = 600
 _department_catalog_cache: tuple[float, dict[str, tuple[str, ...]]] | None = None
@@ -363,25 +364,32 @@ def _load_dynamic_catalog_names() -> tuple[set[str], set[str]]:
     try:
         from scraper.models import BolognaProgram
 
+        _ACADEMIC_PROGRAM_PREFIXES = (
+            'Lisans', 'Ön Lisans', 'Yüksek Lisans', 'Doktora', 'Tezsiz',
+        )
         for faculty, department, program_name in BolognaProgram.objects.values_list(
             'faculty', 'department', 'program_name'
         ):
+            is_academic = bool(program_name and any(
+                program_name.startswith(p) for p in _ACADEMIC_PROGRAM_PREFIXES
+            ))
             if faculty:
                 faculties.add(faculty.strip())
-            if department:
+            if department and is_academic:
                 departments.add(department.strip())
-            if program_name:
+            if program_name and is_academic:
                 departments.add(program_name.strip())
     except Exception as exc:
         logger.info("[CATALOG] Could not load dynamic Bologna catalog: %s", exc)
 
+    _NON_ACADEMIC_FACULTIES = {'Öğrenci Bilgileri', 'Kurumsal Bilgiler'}
     try:
         from scraper.models import ContentChunk
 
         for faculty, department in ContentChunk.objects.values_list('faculty', 'department').distinct():
             if faculty:
                 faculties.add(faculty.strip())
-            if department:
+            if department and faculty not in _NON_ACADEMIC_FACULTIES:
                 departments.add(department.strip())
     except Exception:
         pass
@@ -1776,6 +1784,33 @@ def _search_targeted_faculty_department_pages(faculty: str, max_results: int = 6
     return results
 
 
+def _fetch_all_courses_akts(program_url: str) -> dict[str, str]:
+    """Fetch progCourses.aspx once; return {normalized_code: akts_value} for all courses."""
+    cur_sunit = parse_qs(urlparse(program_url).query).get('curSunit', [''])[0]
+    if not cur_sunit:
+        return {}
+    courses_url = f'https://obs.acibadem.edu.tr/oibs/bologna/progCourses.aspx?lang=tr&curSunit={cur_sunit}'
+    try:
+        response = requests.get(courses_url, timeout=20, headers=HEADERS)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logger.warning("Could not fetch Bologna courses page %s: %s", courses_url, exc)
+        return {}
+    soup = BeautifulSoup(response.content, 'html.parser')
+    akts_map: dict[str, str] = {}
+    for row in soup.find_all('tr'):
+        cells = [c.get_text(' ', strip=True) for c in row.find_all('td')]
+        if len(cells) < 6:
+            continue
+        code = _format_course_code(cells[1] if len(cells) > 1 else '')
+        if not code or not re.match(r'^[A-ZÇĞİÖŞÜ]{2,6}\s*\d{3,4}$', code):
+            continue
+        akts = cells[5] if len(cells) > 5 else ''
+        if _looks_like_numeric_value(akts):
+            akts_map[code.replace(' ', '')] = akts
+    return akts_map
+
+
 def _fetch_bologna_course_row(program_url: str, course_code: str) -> dict | None:
     cur_sunit = parse_qs(urlparse(program_url).query).get('curSunit', [''])[0]
     if not cur_sunit:
@@ -1807,6 +1842,7 @@ def _fetch_bologna_course_row(program_url: str, course_code: str) -> dict | None
             'code': row_code,
             'name': cells[2] if len(cells) > 2 else '',
             'tul': cells[3] if len(cells) > 3 else '',
+            'credit': _local_credit_from_tul(cells[3] if len(cells) > 3 else ''),
             'kind': cells[4] if len(cells) > 4 else '',
             'akts': cells[5] if len(cells) > 5 else '',
             'group_count': cells[6] if len(cells) > 6 else '',
@@ -1819,6 +1855,21 @@ def _fetch_bologna_course_row(program_url: str, course_code: str) -> dict | None
         return details
 
     return None
+
+
+def _extract_bologna_detail_summary(soup: BeautifulSoup) -> dict[str, str]:
+    for row in soup.find_all('tr'):
+        cells = [cell.get_text(' ', strip=True) for cell in row.find_all(['td', 'th'])]
+        if len(cells) < 6 or not _looks_like_course_code_line(cells[1]):
+            continue
+        return {
+            'code': _format_course_code(cells[1]),
+            'name': cells[2],
+            'tul': cells[3],
+            'credit': cells[4],
+            'akts': cells[5],
+        }
+    return {}
 
 
 def _clean_bologna_detail_text(soup: BeautifulSoup, max_chars: int = 7000) -> str:
@@ -1887,12 +1938,14 @@ def _fetch_bologna_course_detail(
 
     detail_soup = BeautifulSoup(response.content, 'html.parser')
     detail_text = _clean_bologna_detail_text(detail_soup)
-    if not detail_text:
+    summary = _extract_bologna_detail_summary(detail_soup)
+    if not detail_text and not summary:
         return {}
 
     return {
         'detail_url': response.url,
         'detail_text': detail_text,
+        **summary,
     }
 
 
@@ -2140,17 +2193,21 @@ def _search_targeted_course_pages(
             details = _fetch_bologna_course_row(program.url, course_code)
             if not details:
                 continue
-            content = '\n'.join([
+            content_lines = [
                 f"Bölüm: {display_name}",
                 f"Ders Kodu: {details['code']}",
                 f"Ders Adı: {details['name']}",
-                f"T+U+L: {details['tul']}",
-                f"Tür: {details['kind']}",
-                f"AKTS: {details['akts']}",
-                f"Öğretim Şekli: {details['teaching_mode']}",
-                '',
-                details.get('detail_text', ''),
-            ]).strip()
+            ]
+            if details.get('credit'):
+                content_lines.append(f"Kredi: {details['credit']}")
+            if details.get('akts'):
+                content_lines.append(f"AKTS: {details['akts']}")
+            if details.get('kind'):
+                content_lines.append(f"Tür: {details['kind']}")
+            if details.get('teaching_mode'):
+                content_lines.append(f"Öğretim Şekli: {details['teaching_mode']}")
+            content_lines.extend(['', details.get('detail_text', '')])
+            content = '\n'.join(content_lines).strip()
             results.append({
                 'url': details.get('detail_url') or details['url'],
                 'title': f"{display_name} {details['code']} Ders Bilgisi",
@@ -2845,7 +2902,10 @@ def _requested_program_types(question: str, *, default_for_departments: bool) ->
     folded = _ascii_fold(question)
     requested: list[str] = []
 
-    if 'on lisans' in folded or 'onlisans' in folded or 'myo' in folded or 'meslek yuksekokulu' in folded:
+    if (
+        'on lisans' in folded or 'onlisans' in folded
+        or 'myo' in folded or 'meslek yuksekokulu' in folded
+    ):
         requested.append('Ön Lisans')
     if 'yuksek lisans' in folded or 'master' in folded:
         requested.append('Yüksek Lisans')
@@ -3019,31 +3079,95 @@ def _requested_semesters(question: str) -> list[int]:
     return semesters
 
 
-def _select_lisans_program_for_department(department: str, question: str):
+def _explicit_program_types(question: str) -> list[str]:
+    folded = _ascii_fold(question)
+    requested: list[str] = []
+
+    if (
+        'on lisans' in folded or 'onlisans' in folded
+        or 'myo' in folded or 'meslek yuksekokulu' in folded
+    ):
+        requested.append('Ön Lisans')
+    if 'yuksek lisans' in folded or 'master' in folded:
+        requested.append('Yüksek Lisans')
+    if 'doktora' in folded or 'phd' in folded:
+        requested.append('Doktora')
+    if 'lisans' in folded and not any(
+        term in folded
+        for term in ('on lisans', 'onlisans', 'yuksek lisans', 'lisansustu')
+    ):
+        requested.append('Lisans')
+
+    return list(dict.fromkeys(requested))
+
+
+def _bologna_program_type(program_name: str) -> str:
+    if ' - ' not in (program_name or ''):
+        return ''
+    program_type = program_name.split(' - ', 1)[0].strip()
+    return program_type if program_type in BOLOGNA_PROGRAM_TYPE_ORDER else ''
+
+
+def _select_bologna_program_for_department(department: str, question: str):
     from scraper.models import BolognaProgram
 
     if not department:
         return None
 
     display_name = _department_display_name(department)
-    dept_folded = _ascii_fold(display_name)
     question_folded = _ascii_fold(question)
     wants_english = 'ingilizce' in question_folded or 'english' in question_folded
+    explicit_types = _explicit_program_types(question)
+    explicit_type_order = {program_type: index for index, program_type in enumerate(explicit_types)}
 
     candidates = []
-    for program in BolognaProgram.objects.exclude(content='').filter(program_name__startswith='Lisans -'):
+    query = Q()
+    for program_type in BOLOGNA_PROGRAM_TYPE_ORDER:
+        query |= Q(program_name__startswith=f'{program_type} -')
+
+    for program in BolognaProgram.objects.exclude(content='').filter(query):
         haystack = f"{program.faculty} {program.department} {program.program_name}"
-        if dept_folded not in _ascii_fold(haystack):
+        if not _has_department_match(haystack, department):
+            continue
+
+        program_type = _bologna_program_type(program.program_name)
+        if explicit_types and program_type not in explicit_types:
             continue
 
         score = 0
         title_folded = _ascii_fold(haystack)
-        if _ascii_fold(program.department).startswith(dept_folded):
-            score += 8
+        display_folded = _ascii_fold(display_name)
+        department_folded = _ascii_fold(program.department)
+        short_name = program.program_name.split(' - ', 1)[-1]
+        short_folded = _ascii_fold(short_name)
+
+        if department_folded == display_folded or short_folded == display_folded:
+            score += 90
+        elif department_folded.startswith(display_folded) or short_folded.startswith(display_folded):
+            score += 70
+        else:
+            score += 35
+
+        if _course_plan_sections(program.content):
+            score += 80
+        if '--- DERSLER ---' in program.content:
+            score += 10
+
+        if explicit_types:
+            score += 50 - explicit_type_order.get(program_type, 0) * 5
+        else:
+            default_type_weight = {
+                'Lisans': 24,
+                'Ön Lisans': 22,
+                'Yüksek Lisans': 10,
+                'Doktora': 8,
+            }
+            score += default_type_weight.get(program_type, 0)
+
         if wants_english and ('ingilizce' in title_folded or 'english' in title_folded):
-            score += 4
+            score += 12
         if not wants_english and 'ingilizce' not in title_folded:
-            score += 2
+            score += 6
         candidates.append((score, program))
 
     if not candidates:
@@ -3054,16 +3178,87 @@ def _select_lisans_program_for_department(department: str, question: str):
 
 
 def _course_plan_sections(content: str) -> dict[tuple[str, int], str]:
-    pattern = re.compile(r'(?m)^(\d+)\.(Yarıyıl|Sınıf) Ders Planı\s*$')
+    pattern = re.compile(r'(?im)^\s*(\d+)\.\s*(Yarıyıl|Sınıf)\s+Ders Planı\s*$')
     matches = list(pattern.finditer(content or ''))
     sections: dict[tuple[str, int], str] = {}
     for index, match in enumerate(matches):
-        unit_type = 'semester' if match.group(2) == 'Yarıyıl' else 'year'
+        unit_label = _ascii_fold(match.group(2))
+        unit_type = 'semester' if unit_label == 'yariyil' else 'year'
         number = int(match.group(1))
         start = match.end()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
         sections[(unit_type, number)] = content[start:end].strip()
     return sections
+
+
+def _semester_numbers_for_course_unit(unit_type: str, number: int) -> tuple[int, ...]:
+    if unit_type == 'semester':
+        return (number,)
+    return (number * 2 - 1, number * 2)
+
+
+def _course_plan_unit_sort_key(unit: tuple[str, int]) -> tuple[int, int]:
+    semesters = _semester_numbers_for_course_unit(unit[0], unit[1])
+    return semesters[0], len(semesters)
+
+
+def _course_semester_number(course: dict[str, str], unit_type: str, number: int) -> int:
+    semesters = _semester_numbers_for_course_unit(unit_type, number)
+    if len(semesters) == 1:
+        return semesters[0]
+
+    code_match = re.search(r'\d+', course.get('code', ''))
+    if code_match and int(code_match.group(0)) % 2 == 0:
+        return semesters[1]
+    return semesters[0]
+
+
+def _course_plan_course_label(course: dict[str, str], unit_type: str, number: int) -> str:
+    return f"{_course_semester_number(course, unit_type, number)}. Yarıyıl"
+
+
+def _course_plan_candidate_units(
+    unit_type: str,
+    number: int,
+    sections: dict[tuple[str, int], str],
+) -> list[tuple[str, int]]:
+    if unit_type == 'year':
+        semester_units = [('semester', number * 2 - 1), ('semester', number * 2)]
+        if any(unit in sections for unit in semester_units):
+            return semester_units
+        return [('year', number)]
+
+    semester_unit = ('semester', number)
+    if semester_unit in sections:
+        return [semester_unit]
+
+    year_number = (number + 1) // 2
+    year_unit = ('year', year_number)
+    if year_unit in sections:
+        return [year_unit]
+
+    return [semester_unit]
+
+
+def _local_credit_from_tul(tul: str) -> str:
+    match = re.fullmatch(r'\s*(\d+)\s*\+\s*(\d+)\s*\+\s*(\d+)\s*', tul or '')
+    if not match:
+        return ''
+
+    theory, practice, lab = (int(value) for value in match.groups())
+    if practice > 20 or lab > 20:
+        return ''
+
+    credit = theory + ((practice + lab) / 2)
+    return str(int(credit)) if credit.is_integer() else f"{credit:g}"
+
+
+def _looks_like_numeric_value(value: str) -> bool:
+    return bool(re.fullmatch(r'\d+(?:[.,]\d+)?', (value or '').strip()))
+
+
+def _looks_like_course_code_line(line: str) -> bool:
+    return bool(re.match(r'^[A-ZÇĞİÖŞÜ]{2,6}\s*[-]?\s*\d{3,4}$', line or ''))
 
 
 def _parse_course_plan_section(section: str, *, include_elective_options: bool = False) -> list[dict[str, str]]:
@@ -3082,24 +3277,33 @@ def _parse_course_plan_section(section: str, *, include_elective_options: bool =
             continue
         if line == 'Toplam AKTS':
             break
-        if not re.match(r'^[A-Z]{2,5}\s+\d{3,4}$', line):
+        if not _looks_like_course_code_line(line):
             index += 1
             continue
 
-        code = line
+        code = _format_course_code(line)
         name = lines[index + 1] if index + 1 < len(lines) else ''
-        credit = lines[index + 2] if index + 2 < len(lines) and re.match(r'^\d+\+\d+\+\d+$', lines[index + 2]) else ''
+        tul = lines[index + 2] if index + 2 < len(lines) and re.match(r'^\d+\+\d+\+\d+$', lines[index + 2]) else ''
+        credit = _local_credit_from_tul(tul)
+        akts = ''
         course_type = ''
         teaching = ''
 
-        cursor = index + 3 if credit else index + 2
+        cursor = index + 3 if tul else index + 2
         if cursor < len(lines) and lines[cursor] in {'Zorunlu', 'Seçmeli'}:
             course_type = lines[cursor]
             cursor += 1
 
+        if cursor < len(lines) and _looks_like_numeric_value(lines[cursor]):
+            akts = lines[cursor]
+            cursor += 1
+
+        if cursor < len(lines) and _looks_like_numeric_value(lines[cursor]):
+            cursor += 1
+
         while cursor < len(lines):
             candidate = lines[cursor]
-            if candidate == 'Toplam AKTS' or re.match(r'^[A-Z]{2,5}\s+\d{3,4}$', candidate):
+            if candidate == 'Toplam AKTS' or _looks_like_course_code_line(candidate):
                 break
             if candidate in {'Yüz Yüze', 'Uzaktan Eğitim', 'Karma'}:
                 teaching = candidate
@@ -3111,7 +3315,9 @@ def _parse_course_plan_section(section: str, *, include_elective_options: bool =
             courses.append({
                 'code': code,
                 'name': name,
+                'tul': tul,
                 'credit': credit,
+                'akts': akts,
                 'type': course_type,
                 'teaching': teaching,
             })
@@ -3147,16 +3353,98 @@ def _parse_course_plan_section(section: str, *, include_elective_options: bool =
     return filtered_courses
 
 
+def _course_code_key(code: str) -> str:
+    return _format_course_code(code).replace(' ', '')
+
+
+def _course_detail_summary_from_text(code: str, title: str, section: str) -> dict[str, str]:
+    lines = [line.strip() for line in (section or '').splitlines() if line.strip()]
+    target_key = _course_code_key(code)
+
+    for index, line in enumerate(lines):
+        if _course_code_key(line) != target_key:
+            continue
+
+        name = lines[index + 1] if index + 1 < len(lines) else title
+        tul = lines[index + 2] if index + 2 < len(lines) and re.match(r'^\d+\+\d+\+\d+$', lines[index + 2]) else ''
+        credit = lines[index + 3] if index + 3 < len(lines) and _looks_like_numeric_value(lines[index + 3]) else ''
+        akts = lines[index + 4] if index + 4 < len(lines) and _looks_like_numeric_value(lines[index + 4]) else ''
+
+        return {
+            'code': _format_course_code(code),
+            'name': name,
+            'tul': tul,
+            'credit': credit or _local_credit_from_tul(tul),
+            'akts': akts,
+        }
+
+    return {}
+
+
+def _course_detail_summary_map(content: str) -> dict[str, dict[str, str]]:
+    summaries: dict[str, dict[str, str]] = {}
+    for code, title, section in _iter_scraped_course_detail_sections(content):
+        summary = _course_detail_summary_from_text(code, title, section)
+        if summary:
+            summaries[_course_code_key(code)] = summary
+    return summaries
+
+
+def _merge_course_summary(course: dict[str, str], summaries: dict[str, dict[str, str]]) -> dict[str, str]:
+    summary = summaries.get(_course_code_key(course.get('code', '')), {})
+    if not summary:
+        return course
+
+    merged = dict(course)
+    for key in ('name', 'tul', 'credit', 'akts'):
+        if summary.get(key):
+            merged[key] = summary[key]
+    return merged
+
+
+def _course_list_suffix(course: dict[str, str]) -> str:
+    details = []
+    if course.get('credit'):
+        details.append(f"Kredi: {course['credit']}")
+    if course.get('akts'):
+        details.append(f"AKTS: {course['akts']}")
+    if course.get('type'):
+        details.append(f"Tür: {course['type']}")
+    return f" ({', '.join(details)})" if details else ''
+
+
+def _asks_for_course_plan_listing(question: str, units: list[tuple[str, int]] | None = None) -> bool:
+    folded = _ascii_fold(question)
+    if not any(term in folded for term in ('ders', 'mufredat', 'course', 'curriculum')):
+        return False
+
+    if units:
+        return True
+
+    if any(term in folded for term in ('ders plani', 'mufredat', 'curriculum', 'course plan')):
+        return True
+
+    course_list_terms = (
+        'dersleri', 'derslerini', 'dersler', 'hangi ders',
+        'aldigi ders', 'alinan ders', 'alinacak ders',
+        'zorunlu ders', 'secmeli ders', 'course list',
+    )
+    if any(term in folded for term in course_list_terms):
+        return True
+
+    return is_listing_question(question) and 'ders' in folded
+
+
 def _course_plan_listing_context(question: str, department: str) -> tuple[str, list[str]]:
     units = _requested_course_plan_units(question)
     if not department:
         return '', []
 
-    folded = _ascii_fold(question)
-    if 'ders' not in folded and 'mufredat' not in folded and 'course' not in folded:
+    if not _asks_for_course_plan_listing(question, units):
         return '', []
 
-    program = _select_lisans_program_for_department(department, question)
+    folded = _ascii_fold(question)
+    program = _select_bologna_program_for_department(department, question)
     if not program:
         return '', []
 
@@ -3164,8 +3452,11 @@ def _course_plan_listing_context(question: str, department: str) -> tuple[str, l
     if not sections:
         return '', []
 
-    if not units and any(term in folded for term in ('ders plani', 'mufredat', 'curriculum')):
-        units = sorted(sections, key=lambda item: (0 if item[0] == 'semester' else 1, item[1]))
+    detail_summaries = _course_detail_summary_map(program.content)
+    akts_map = _fetch_all_courses_akts(program.url)
+
+    if not units and _asks_for_course_plan_listing(question, units):
+        units = sorted(sections, key=_course_plan_unit_sort_key)
 
     include_elective_options = any(term in folded for term in (
         'secmeli dersler', 'secmeli ders seçenek', 'secmeli ders secenek',
@@ -3178,15 +3469,9 @@ def _course_plan_listing_context(question: str, department: str) -> tuple[str, l
     answer_lines = [f"{program.department} ders planı aşağıdaki gibidir:"]
 
     found_any = False
-    rendered_units: list[tuple[str, int]] = []
+    rendered_semesters: list[int] = []
     for unit_type, number in units:
-        candidate_units: list[tuple[str, int]]
-        if unit_type == 'year' and ('year', number) not in sections:
-            candidate_units = [('semester', number * 2 - 1), ('semester', number * 2)]
-        else:
-            candidate_units = [(unit_type, number)]
-
-        for candidate_type, candidate_number in candidate_units:
+        for candidate_type, candidate_number in _course_plan_candidate_units(unit_type, number, sections):
             section = sections.get((candidate_type, candidate_number), '')
             if not section:
                 continue
@@ -3196,26 +3481,36 @@ def _course_plan_listing_context(question: str, department: str) -> tuple[str, l
             )
             if not courses:
                 continue
-            found_any = True
-            rendered_units.append((candidate_type, candidate_number))
-            label = f"{candidate_number}. Yarıyıl" if candidate_type == 'semester' else f"{candidate_number}. Sınıf"
-            answer_lines.append(f"\n{label}:")
+
+            grouped_courses: dict[int, list[dict[str, str]]] = {}
             for course in courses:
-                details = []
-                if course['credit']:
-                    details.append(course['credit'])
-                if course['type']:
-                    details.append(course['type'])
-                suffix = f" ({', '.join(details)})" if details else ''
-                answer_lines.append(f"- {course['code']} - {course['name']}{suffix}")
+                course = _merge_course_summary(course, detail_summaries)
+                if not course.get('akts'):
+                    akts_val = akts_map.get(course['code'].replace(' ', ''), '')
+                    if akts_val:
+                        course = dict(course)
+                        course['akts'] = akts_val
+                semester_number = _course_semester_number(course, candidate_type, candidate_number)
+                if unit_type == 'semester' and semester_number != number:
+                    continue
+                grouped_courses.setdefault(semester_number, []).append(course)
+
+            for semester_number in sorted(grouped_courses):
+                semester_courses = grouped_courses[semester_number]
+                if not semester_courses:
+                    continue
+                found_any = True
+                rendered_semesters.append(semester_number)
+                answer_lines.append(f"\n{semester_number}. Yarıyıl:")
+                for course in semester_courses:
+                    answer_lines.append(f"- {course['code']} - {course['name']}{_course_list_suffix(course)}")
 
     if not found_any:
         return '', []
 
-    if len(units) == 1 and units[0][0] == 'year':
-        answer_lines[0] = f"{program.department} {units[0][1]}. sınıf öğrencilerinin aldığı dersler şunlardır:"
-    elif len(rendered_units) == 1 and rendered_units[0][0] == 'semester':
-        answer_lines[0] = f"{program.department} programında {rendered_units[0][1]}. yarıyıl dersleri şunlardır:"
+    if len(set(rendered_semesters)) == 1:
+        semester_number = rendered_semesters[0]
+        answer_lines[0] = f"{program.department} programında {semester_number}. yarıyıl dersleri şunlardır:"
 
     context = "=== DOĞRUDAN DERS PLANI YANITI ===\nYANIT:\n" + '\n'.join(answer_lines)
     return context, [_course_source_url(program.url)]
@@ -3229,13 +3524,17 @@ def _course_code_context(question: str, course_codes: list[str], department: str
 
     folded_question = _ascii_fold(question)
     wants_detail = any(term in folded_question for term in ('icerik', 'icerig', 'amac', 'detay', 'hakkinda'))
-    candidate_programs = list(BolognaProgram.objects.exclude(content='').filter(program_name__startswith='Lisans -'))
+    query = Q()
+    for program_type in BOLOGNA_PROGRAM_TYPE_ORDER:
+        query |= Q(program_name__startswith=f'{program_type} -')
+    candidate_programs = list(BolognaProgram.objects.exclude(content='').filter(query))
     if department:
-        display_name = _department_display_name(department)
-        dept_folded = _ascii_fold(display_name)
         narrowed = [
             program for program in candidate_programs
-            if dept_folded in _ascii_fold(f"{program.faculty} {program.department} {program.program_name}")
+            if _has_department_match(
+                f"{program.faculty} {program.department} {program.program_name}",
+                department,
+            )
         ]
         if narrowed:
             candidate_programs = narrowed
@@ -3243,10 +3542,12 @@ def _course_code_context(question: str, course_codes: list[str], department: str
     rows = []
     seen = set()
     for program in candidate_programs:
+        detail_summaries = _course_detail_summary_map(program.content)
         sections = _course_plan_sections(program.content)
         for unit, section in sections.items():
             courses = _parse_course_plan_section(section, include_elective_options=True)
             for course in courses:
+                course = _merge_course_summary(course, detail_summaries)
                 for code in course_codes:
                     if course['code'].replace(' ', '') != _format_course_code(code).replace(' ', ''):
                         continue
@@ -3267,7 +3568,11 @@ def _course_code_context(question: str, course_codes: list[str], department: str
     for program, unit, course in rows:
         details = _fetch_bologna_course_row(program.url, course['code'])
         akts = details.get('akts', '') if details else ''
-        tul = details.get('tul', '') if details else course['credit']
+        credit = details.get('credit', '') if details else ''
+        if not credit:
+            credit = course.get('credit', '')
+        if not akts:
+            akts = course.get('akts', '')
         kind = details.get('kind', '') if details else course['type']
         teaching = details.get('teaching_mode', '') if details else course['teaching']
         url = details.get('detail_url') if details else ''
@@ -3275,18 +3580,18 @@ def _course_code_context(question: str, course_codes: list[str], department: str
         if source_url and source_url not in sources:
             sources.append(source_url)
 
-        label = f"{unit[1]}. Yarıyıl" if unit[0] == 'semester' else f"{unit[1]}. Sınıf"
+        label = _course_plan_course_label(course, unit[0], unit[1])
         answer_lines.extend([
             f"{program.department} - {label}",
             f"Ders Kodu: {details.get('code', course['code']) if details else course['code']}",
             f"Ders Adı: {details.get('name', course['name']) if details else course['name']}",
         ])
-        if tul:
-            answer_lines.append(f"T+U+L: {tul}")
-        if kind:
-            answer_lines.append(f"Tür: {kind}")
+        if credit:
+            answer_lines.append(f"Kredi: {credit}")
         if akts:
             answer_lines.append(f"AKTS: {akts}")
+        if kind:
+            answer_lines.append(f"Tür: {kind}")
         if teaching:
             answer_lines.append(f"Öğretim Şekli: {teaching}")
         if wants_detail and details and details.get('detail_text'):
@@ -3320,7 +3625,8 @@ def _general_info_context(question: str, intent: str) -> tuple[str, list[str]]:
             continue
         page = BolognaProgram.objects.filter(program_name=page_name).first()
         if page and page.content:
-            return f"=== {page.faculty} - {page.program_name} ===\n{page.content}", [page.url]
+            context = "=== DOĞRUDAN KATALOG YANITI ===\nYANIT:\n" + page.content.strip()
+            return context, [page.url]
 
     return '', []
 
@@ -3766,6 +4072,15 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
         logger.info("[RETRIEVAL] direct exact-person lookup")
         return person_context, person_sources
 
+    if target_department and (
+        intent in (INTENT_COURSE, INTENT_BOLOGNA, INTENT_DEPARTMENT)
+        or _asks_for_course_plan_listing(question)
+    ):
+        course_plan_context, course_plan_sources = _course_plan_listing_context(question, target_department)
+        if course_plan_context:
+            logger.info("[RETRIEVAL] direct course plan listing for department=%s", target_department)
+            return course_plan_context, course_plan_sources
+
     if intent not in {INTENT_STAFF, INTENT_CONTACT, INTENT_ADMISSION, INTENT_COURSE}:
         catalog_context, catalog_sources = _catalog_listing_context(
             question,
@@ -3825,12 +4140,6 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
             sources.append(result['url'])
         if context_parts:
             return '\n\n'.join(context_parts), sources
-
-    if target_department and intent in (INTENT_COURSE, INTENT_BOLOGNA, INTENT_DEPARTMENT):
-        course_plan_context, course_plan_sources = _course_plan_listing_context(question, target_department)
-        if course_plan_context:
-            logger.info("[RETRIEVAL] direct course plan listing for department=%s", target_department)
-            return course_plan_context, course_plan_sources
 
     if entities['course_codes']:
         effective_dept = target_department or _department_from_course_codes(entities['course_codes'])

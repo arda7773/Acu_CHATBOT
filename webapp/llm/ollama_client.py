@@ -234,6 +234,9 @@ def _looks_like_person_name(text: str) -> bool:
     return len(words) >= 2 and any(char.isupper() for char in text)
 
 
+_TITLE_RANK: dict[str, int] = {t: i for i, t in enumerate(_ACADEMIC_TITLES)}
+
+
 def _direct_staff_answer(question: str, context: str) -> str:
     if not _is_staff_list_question(question):
         return ''
@@ -241,8 +244,8 @@ def _direct_staff_answer(question: str, context: str) -> str:
         return ''
 
     lines = [line.strip() for line in context.splitlines() if line.strip()]
-    staff = []
-    seen = set()
+    staff: list[str] = []
+    name_to_idx: dict[str, int] = {}
     pending_head = False
     title = ''
     title_set = set(_ACADEMIC_TITLES)
@@ -273,9 +276,21 @@ def _direct_staff_answer(question: str, context: str) -> str:
         if title and _looks_like_person_name(line):
             prefix = 'Anabilim Dalı Başkanı ' if pending_head else ''
             item = f"{prefix}{title} {line}"
-            key = _normalise_for_match(item)
-            if key not in seen:
-                seen.add(key)
+            name_key = _normalise_for_match(line)
+
+            if name_key in name_to_idx:
+                existing_idx = name_to_idx[name_key]
+                existing = staff[existing_idx]
+                existing_has_head = existing.startswith('Anabilim Dalı Başkanı')
+                has_head = bool(prefix)
+                if has_head and not existing_has_head:
+                    staff[existing_idx] = item
+                elif not has_head and not existing_has_head:
+                    existing_title = next((t for t in _ACADEMIC_TITLES if t in existing), None)
+                    if _TITLE_RANK.get(title, 99) < _TITLE_RANK.get(existing_title, 99):
+                        staff[existing_idx] = item
+            else:
+                name_to_idx[name_key] = len(staff)
                 staff.append(item)
             pending_head = False
 
@@ -364,6 +379,8 @@ def _extract_address_from_context(context: str) -> str:
     best_parts: list[str] = []
     best_score = 0
     for idx, line in enumerate(lines):
+        if line.startswith('==='):
+            continue
         score = line_score(line)
         if score <= 0:
             continue
