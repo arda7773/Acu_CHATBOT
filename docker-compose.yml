@@ -44,6 +44,8 @@ services:
       - OLLAMA_URL=http://ollama:11434
       - SELENIUM_URL=http://selenium:4444/wd/hub
       - DB_HOST=db
+      - SCRAPE_BOLOGNA=false
+      - EMBED_ON_START=false
       - USE_DJANGO_RUNSERVER=true
     depends_on:
       db:

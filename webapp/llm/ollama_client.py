@@ -106,7 +106,8 @@ def _is_course_detail_question(question: str) -> bool:
 def _is_staff_list_question(question: str) -> bool:
     lowered = _normalise_for_match(question)
     return any(term in lowered for term in (
-        'akademik kadro', 'hocalar', 'hoca', 'ogretim uyesi',
+        'akademik kadro', 'akadem kadro', 'akadem kadrosu', 'akadem kadrosunu',
+        'kadrosunu say', 'hocalar', 'hoca', 'ogretim uyesi',
         'ogretim uyeleri', 'kimler var', 'faculty members',
     ))
 
@@ -245,11 +246,13 @@ def _direct_staff_answer(question: str, context: str) -> str:
     pending_head = False
     title = ''
     title_set = set(_ACADEMIC_TITLES)
+    footnote_mode = False
 
     for line in lines:
         if line.startswith('==='):
             pending_head = False
             title = ''
+            footnote_mode = False
             continue
 
         if line == 'Anabilim Dalı Başkanı':
@@ -258,9 +261,13 @@ def _direct_staff_answer(question: str, context: str) -> str:
 
         if line in title_set:
             title = line
+            footnote_mode = False
             continue
 
-        if line == '(*)':
+        if re.fullmatch(r'\({1,3}\*{1,3}\)', line):
+            footnote_mode = True
+            continue
+        if footnote_mode and re.search(r'Kanun|Madde|Uyarınca|Görevlendirilen', line, re.IGNORECASE):
             continue
 
         if title and _looks_like_person_name(line):
@@ -271,7 +278,6 @@ def _direct_staff_answer(question: str, context: str) -> str:
                 seen.add(key)
                 staff.append(item)
             pending_head = False
-            title = ''
 
     if not staff:
         return ''
@@ -311,6 +317,23 @@ def _direct_bologna_process_answer(question: str, context: str) -> str:
     if not answer:
         return ''
     return f"Bologna Süreci hakkında kaynakta yer alan bilgi şöyle:\n\n{answer}"
+
+
+def _direct_catalog_listing_answer(context: str) -> str:
+    markers = (
+        '=== DOĞRUDAN KATALOG YANITI ===',
+        '=== DOĞRUDAN DERS PLANI YANITI ===',
+        '=== DOĞRUDAN DERS KODU YANITI ===',
+        '=== DOĞRUDAN KİŞİ YANITI ===',
+    )
+    marker = next((candidate for candidate in markers if candidate in context), '')
+    if not marker:
+        return ''
+    section = context.split(marker, 1)[1]
+    if 'YANIT:' in section:
+        section = section.split('YANIT:', 1)[1]
+    answer = section.strip()
+    return answer if answer else ''
 
 
 def _is_address_question(question: str) -> bool:
@@ -373,6 +396,10 @@ def get_answer(question: str, context: str) -> str:
     """
     if not context or not context.strip():
         return FALLBACK_ANSWER
+
+    direct_catalog_answer = _direct_catalog_listing_answer(context)
+    if direct_catalog_answer:
+        return direct_catalog_answer
 
     direct_address = _extract_address_from_context(context)
     if _is_address_question(question) and direct_address:
@@ -469,6 +496,11 @@ def stream_answer(question: str, context: str) -> Iterator[str]:
     """
     if not context or not context.strip():
         yield FALLBACK_ANSWER
+        return
+
+    direct_catalog_answer = _direct_catalog_listing_answer(context)
+    if direct_catalog_answer:
+        yield direct_catalog_answer
         return
 
     direct_address = _extract_address_from_context(context)

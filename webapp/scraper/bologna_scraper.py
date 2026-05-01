@@ -21,6 +21,14 @@ PROGRAM_TYPES = {
     'dok': 'Doktora',
 }
 
+# OBS'de eski/geçersiz isimlerle kalan fakülteler — programları doğru fakülte
+# altında zaten tekrar listeleniyor, bu yüzden bunları atlıyoruz.
+OBSOLETE_FACULTIES = {
+    'Fen Edebiyat Fakültesi',
+    'Fen-Edebiyat Fakültesi',
+    'Mühendislik Fakültesi',
+}
+
 # General info pages: pageId -> (title, faculty_label)
 GENERAL_PAGES = {
     100: ('Yönetim', 'Kurumsal Bilgiler'),
@@ -185,7 +193,9 @@ def get_all_program_links() -> list[dict]:
             continue
 
         current_faculty = ''
+        current_faculty_is_obsolete = False
         type_count = 0
+        skipped_obsolete_count = 0
 
         for a in soup.find_all('a', href=True):
             href = a['href'].strip()
@@ -197,10 +207,20 @@ def get_all_program_links() -> list[dict]:
             # Faculty headers link to in-page anchors like #x12, #x01, etc.
             if href.startswith('#x') and len(href) <= 5:
                 current_faculty = text
+                current_faculty_is_obsolete = current_faculty in OBSOLETE_FACULTIES
                 continue
 
             # Program links — these have showPac + curSunit
             if 'showPac' in href and 'curSunit' in href:
+                if current_faculty_is_obsolete:
+                    skipped_obsolete_count += 1
+                    logger.info(
+                        "Skipping obsolete OBS faculty entry: %s | %s",
+                        current_faculty,
+                        text,
+                    )
+                    continue
+
                 full_url = urljoin(BASE_URL, href)
                 parsed = urlparse(full_url)
                 params = parse_qs(parsed.query)
@@ -218,7 +238,10 @@ def get_all_program_links() -> list[dict]:
                     })
                     type_count += 1
 
-        logger.info(f"Found {type_count} {type_name} programs")
+        logger.info(
+            f"Found {type_count} {type_name} programs"
+            f" ({skipped_obsolete_count} obsolete OBS entries skipped)"
+        )
 
     return programs
 
@@ -300,6 +323,38 @@ def _has_complete_program_content(content: str) -> bool:
     )
 
 
+def cleanup_obsolete_faculty_entries():
+    """Remove stale Bologna rows/chunks that came from obsolete OBS faculty blocks."""
+    from scraper.models import BolognaProgram, ContentChunk
+
+    stale_urls = list(
+        BolognaProgram.objects
+        .filter(faculty__in=OBSOLETE_FACULTIES)
+        .values_list('url', flat=True)
+    )
+    deleted_programs, _ = BolognaProgram.objects.filter(faculty__in=OBSOLETE_FACULTIES).delete()
+    deleted_chunks = 0
+
+    chunk_filters = ContentChunk.objects.filter(
+        source_type=ContentChunk.SOURCE_BOLOGNA,
+        faculty__in=OBSOLETE_FACULTIES,
+    )
+    deleted_chunks += chunk_filters.delete()[0]
+
+    if stale_urls:
+        deleted_chunks += ContentChunk.objects.filter(
+            source_type=ContentChunk.SOURCE_BOLOGNA,
+            source_url__in=stale_urls,
+        ).delete()[0]
+
+    if deleted_programs or deleted_chunks:
+        logger.info(
+            "Removed obsolete OBS Bologna data: %s programs, %s chunks",
+            deleted_programs,
+            deleted_chunks,
+        )
+
+
 def scrape_all_bologna(skip_existing: bool = False, start_at: int = 1):
     """
     Main entry point. Uses requests+BeautifulSoup — no Selenium needed.
@@ -310,6 +365,7 @@ def scrape_all_bologna(skip_existing: bool = False, start_at: int = 1):
     from scraper.models import BolognaProgram
 
     logger.info("Bologna scraper starting (requests-based, no Selenium)...")
+    cleanup_obsolete_faculty_entries()
 
     # --- Step 1: General info pages ---
     logger.info("Scraping general university info pages...")

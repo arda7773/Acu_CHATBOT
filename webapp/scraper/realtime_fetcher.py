@@ -100,6 +100,53 @@ HEAD_KEYWORDS = {
     'program baskani', 'chair', 'head of department', 'director',
 }
 
+PERSON_LOOKUP_TERMS = (
+    'kimdir', 'kim', 'hakkinda', 'hakkında', 'ozgecmis', 'özgeçmiş',
+    'cv', 'gorevi', 'görevi', 'ne is yap', 'ne iş yap',
+)
+
+PERSON_QUERY_DROP_WORDS = {
+    'kimdir', 'kim', 'hakkinda', 'hakkında', 'hakkin', 'hakkın',
+    'bilgi', 'ver', 'verir', 'verebilir', 'nedir', 'ne', 'is', 'iş',
+    'yapar', 'gorev', 'gorevi', 'görev', 'görevi', 'ozgecmis', 'özgeçmiş',
+    'cv', 'acibadem', 'üniversitesi', 'universitesi', 'universite',
+    'üniversite', 'hocasi', 'hocası', 'hoca', 'akademisyen',
+    'akademik', 'personel', 'prof', 'profesor', 'profesör', 'dr',
+    'doc', 'doç', 'docent', 'doçent', 'ogr', 'öğr', 'ogretim',
+    'öğretim', 'uyesi', 'üyesi', 'ars', 'arş', 'gor', 'gör',
+    'bolum', 'bölüm', 'bolumu', 'bölümü', 'fakulte', 'fakülte',
+    'fakultesi', 'fakültesi', 'dekan', 'dekani', 'dekanı',
+    'baskan', 'başkan', 'baskani', 'başkanı', 'program',
+    'anabilim', 'dali', 'dalı', 'mudur', 'müdür', 'muduru', 'müdürü',
+}
+
+PERSON_TITLE_LABELS = (
+    'Prof. Dr.',
+    'Doç. Dr.',
+    'Dr. Öğr. Üyesi',
+    'Öğr. Gör. Dr.',
+    'Öğr. Gör.',
+    'Arş. Gör. Dr.',
+    'Arş. Gör.',
+    'Prof.',
+    'Doç.',
+    'Dr.',
+)
+
+PERSON_ROLE_LABELS = (
+    ('bolum baskani', 'Bölüm Başkanı'),
+    ('anabilim dali baskani', 'Anabilim Dalı Başkanı'),
+    ('program baskani', 'Program Başkanı'),
+    ('dekan yardimcisi', 'Dekan Yardımcısı'),
+    ('dekan', 'Dekan'),
+    ('mudur yardimcisi', 'Müdür Yardımcısı'),
+    ('müdür yardimcisi', 'Müdür Yardımcısı'),
+    ('mudur', 'Müdür'),
+    ('müdür', 'Müdür'),
+    ('koordinator', 'Koordinatör'),
+    ('koordinatör', 'Koordinatör'),
+)
+
 COURSE_CODE_PREFIX_MAP = {
     'CSE': 'bilgisayar mühendisliği',
     'MBG': 'moleküler biyoloji ve genetik',
@@ -173,6 +220,13 @@ FACULTY_URL_SLUGS = {
     ),
 }
 
+BOLOGNA_UNIT_SELECTION_URLS = {
+    'Lisans': 'https://obs.acibadem.edu.tr/oibs/bologna/unitSelection.aspx?type=lis&lang=tr',
+    'Ön Lisans': 'https://obs.acibadem.edu.tr/oibs/bologna/unitSelection.aspx?type=myo&lang=tr',
+    'Yüksek Lisans': 'https://obs.acibadem.edu.tr/oibs/bologna/unitSelection.aspx?type=yls&lang=tr',
+    'Doktora': 'https://obs.acibadem.edu.tr/oibs/bologna/unitSelection.aspx?type=dok&lang=tr',
+}
+
 _CATALOG_CACHE_TTL_SECONDS = 600
 _department_catalog_cache: tuple[float, dict[str, tuple[str, ...]]] | None = None
 _department_slug_cache: tuple[float, dict[str, tuple[str, ...]]] | None = None
@@ -216,17 +270,40 @@ def _program_name_variants(name: str) -> set[str]:
     if ascii_name:
         variants.add(ascii_name)
 
+    # Bologna programs are saved as "Ön Lisans - Aşçılık" / "Lisans - Psikoloji"
+    # etc. Strip the program-type prefix so the bare name (e.g. "Aşçılık") can
+    # match user questions like "Aşçılık bölümü derslerini say".
+    no_type_prefix = re.sub(
+        r'^(ön\s*lisans|on\s*lisans|lisans|tezli\s*yüksek\s*lisans|tezsiz\s*yüksek\s*lisans|yüksek\s*lisans|yuksek\s*lisans|doktora)\s*[-:/]\s*',
+        '',
+        name,
+        flags=re.IGNORECASE,
+    ).strip()
+    if no_type_prefix and no_type_prefix != name:
+        variants.add(no_type_prefix)
+        variants.add(_ascii_fold(no_type_prefix))
+        name_for_suffix_strip = no_type_prefix
+    else:
+        name_for_suffix_strip = name
+
     # Common question phrasings omit suffixes like "programı" / "bölümü"
     shortened = re.sub(
         r'\b(programı|programi|program|bölümü|bolumu|bölüm|bolum|anabilim dalı|anabilim dali|abd|ad)\b',
         '',
-        name,
+        name_for_suffix_strip,
         flags=re.IGNORECASE,
     )
     shortened = re.sub(r'\s+', ' ', shortened).strip(' -/')
-    if shortened and shortened != name:
+    if shortened and shortened != name_for_suffix_strip:
         variants.add(shortened)
         variants.add(_ascii_fold(shortened))
+
+    # Drop the "(İngilizce)" / "(English)" parenthetical so the Turkish-language
+    # question matches both Turkish and English programs of the same name.
+    no_paren = re.sub(r'\s*\([^)]*\)\s*$', '', name_for_suffix_strip).strip()
+    if no_paren and no_paren != name_for_suffix_strip:
+        variants.add(no_paren)
+        variants.add(_ascii_fold(no_paren))
 
     for variant in list(variants):
         compact = variant.strip()
@@ -421,10 +498,12 @@ def _department_from_course_codes(course_codes: list[str]) -> str:
 
 def is_listing_question(text: str) -> bool:
     """Detect questions that ask for a complete list (e.g. 'hangi fakülteler var')."""
-    words = set(normalize_text(text).split())
+    normalized = _ascii_fold(text)
+    words = set(re.sub(r'[^\w\s]', ' ', normalized).split())
     listing_phrases = {
-        'hangi', 'hepsi', 'hepsini', 'tüm', 'bütün', 'listele',
+        'hangi', 'hepsi', 'hepsini', 'tum', 'tüm', 'butun', 'bütün', 'listele',
         'neler', 'nelerdir', 'say', 'tamamı', 'tamamını',
+        'tamami', 'tamamini',
     }
     return bool(words & listing_phrases)
 
@@ -670,6 +749,13 @@ def _course_code_variants(code: str) -> set[str]:
     return {variant for variant in (formatted, compact) if variant}
 
 
+def _course_source_url(program_url: str) -> str:
+    cur_sunit = parse_qs(urlparse(program_url).query).get('curSunit', [''])[0]
+    if not cur_sunit:
+        return program_url
+    return f'https://obs.acibadem.edu.tr/oibs/bologna/progCourses.aspx?lang=tr&curSunit={cur_sunit}'
+
+
 def extract_named_entities(question: str) -> dict[str, list[str]]:
     normalized = normalize_text(question)
     faculty_hits = []
@@ -714,7 +800,8 @@ _INTENT_SIGNALS: dict[str, list[str]] = {
         'iş imkânı', 'is imkani', 'iş olanağı', 'is olanagi',
     ],
     INTENT_STAFF: [
-        'akademik kadro', 'öğretim üyesi', 'hocalar', 'hoca', 'ogretim uyesi',
+        'akademik kadro', 'akadem kadro', 'akadem kadrosu', 'akadem kadrosunu',
+        'kadrosunu say', 'öğretim üyesi', 'hocalar', 'hoca', 'ogretim uyesi',
         'profesör', 'doçent', 'araştırma görevlisi', 'faculty members', 'kimler var',
     ],
     INTENT_ADMISSION: [
@@ -1517,6 +1604,7 @@ def _search_targeted_staff_pages(department: str, max_results: int = 3) -> list[
         .values_list('url', flat=True)[: max_results * 3]
     )
 
+    staff_pattern = re.compile(r'(Prof\.\s*Dr\.|Doç\.\s*Dr\.|Dr\.\s*Öğr|Arş\.\s*Gör|Öğr\.\s*Gör|Uzman\s*Dr\.)')
     results = []
     title_prefix = _department_display_name(department)
     for url in indexed_urls:
@@ -1525,6 +1613,10 @@ def _search_targeted_staff_pages(department: str, max_results: int = 3) -> list[
             continue
         haystack = f"{page.title} {page.url} {page.text[:2000]}"
         if not _has_department_match(haystack, department):
+            continue
+        # Skip nav-only stubs (e.g. Eczacılık's /akademik-kadro hub) that
+        # have no actual academic title rows — caller will fall back.
+        if not staff_pattern.search(page.text or ''):
             continue
         results.append({
             'url': page.url,
@@ -1568,6 +1660,75 @@ def _search_targeted_head_pages(department: str, max_results: int = 3) -> list[d
             'url': page.url,
             'title': f"{title_prefix} Bölüm Başkanı",
             'text': page.text[:2200],
+        })
+        if len(results) >= max_results:
+            break
+
+    return results
+
+
+def _search_targeted_faculty_staff_pages(faculty: str, max_results: int = 6) -> list[dict]:
+    """
+    Faculty-level staff retrieval. Some faculties (e.g. Eczacılık) have an
+    empty /akademik-kadro hub that only contains nav links — the real names
+    live on /yonetim and on each anabilim dalı page under /bolumler/. Pull
+    the populated pages so the LLM can actually ground the answer.
+
+    Accepts either a faculty or department name — falls back to the matching
+    URL slug since faculties like Eczacılık aren't in FACULTY_URL_SLUGS.
+    """
+    from scraper.models import URLIndex
+
+    slugs = _faculty_slug_variants(faculty) or _department_slug_variants(faculty)
+    if not slugs:
+        slug = _slugify_value(faculty)
+        slugs = (slug,) if slug else ()
+    if not slugs:
+        return []
+
+    query = Q()
+    for slug in slugs:
+        query |= Q(url__icontains=slug)
+
+    candidate_urls = list(
+        URLIndex.objects.filter(query).values_list('url', flat=True)
+    )
+    if not candidate_urls:
+        return []
+
+    def _bucket(url: str) -> int:
+        u = url.lower()
+        if '/yonetim' in u or '/management' in u:
+            return 0
+        if '/akademik-kadro' in u or '/academic-staff' in u:
+            return 1
+        if '/bolumler/' in u or '/departments/' in u:
+            return 2
+        return 9
+
+    ordered = sorted(
+        dict.fromkeys(candidate_urls),
+        key=lambda u: (_bucket(u), len(u)),
+    )
+
+    staff_pattern = re.compile(r'(Prof\.\s*Dr\.|Doç\.\s*Dr\.|Dr\.\s*Öğr|Arş\.\s*Gör|Öğr\.\s*Gör|Uzman\s*Dr\.)')
+
+    results: list[dict] = []
+    faculty_title = _faculty_display_name(faculty)
+    for url in ordered:
+        if _bucket(url) >= 9:
+            continue
+        page = _load_or_scrape_page(url)
+        if not page:
+            continue
+        body = (page.text or '').strip()
+        if len(body) < 200 or not staff_pattern.search(body):
+            continue
+        page_label = page.title.strip() if page.title else 'Akademik Kadro'
+        results.append({
+            'url': page.url,
+            'title': f"{faculty_title} - {page_label}",
+            'text': body[:6000],
         })
         if len(results) >= max_results:
             break
@@ -2667,6 +2828,915 @@ def _top_chunks_are_strong(top_chunks: list[dict]) -> bool:
     return best_score >= 0.52 and avg_score >= 0.40
 
 
+def _asks_for_catalog_listing(question: str, keywords: list[str], listing: bool) -> bool:
+    if not listing:
+        return False
+    folded = _ascii_fold(question)
+    keyword_blob = ' '.join(_ascii_fold(keyword) for keyword in keywords)
+    haystack = f"{folded} {keyword_blob}"
+    return any(term in haystack for term in (
+        'bolum', 'bolumler', 'program', 'programlar',
+        'fakulte', 'fakulteler', 'lisans', 'on lisans',
+        'yuksek lisans', 'doktora',
+    ))
+
+
+def _requested_program_types(question: str, *, default_for_departments: bool) -> list[str]:
+    folded = _ascii_fold(question)
+    requested: list[str] = []
+
+    if 'on lisans' in folded or 'onlisans' in folded or 'myo' in folded or 'meslek yuksekokulu' in folded:
+        requested.append('Ön Lisans')
+    if 'yuksek lisans' in folded or 'master' in folded:
+        requested.append('Yüksek Lisans')
+    if 'doktora' in folded or 'phd' in folded:
+        requested.append('Doktora')
+    if (
+        ('lisans' in folded and 'yuksek lisans' not in folded and 'on lisans' not in folded and 'onlisans' not in folded)
+        or default_for_departments
+    ):
+        requested.insert(0, 'Lisans')
+
+    if any(term in folded for term in ('tum program', 'tüm program', 'butun program', 'bütün program', 'hepsi', 'tamami', 'tamamini')):
+        return ['Lisans', 'Ön Lisans', 'Yüksek Lisans', 'Doktora']
+
+    return list(dict.fromkeys(requested)) or ['Lisans']
+
+
+def _program_rows_for_types(program_types: list[str], target_faculty: str = ''):
+    from scraper.models import BolognaProgram
+
+    query = Q()
+    for program_type in program_types:
+        query |= Q(program_name__startswith=f'{program_type} -')
+
+    rows = list(
+        BolognaProgram.objects
+        .filter(query)
+        .exclude(content='')
+        .order_by('faculty', 'department')
+    )
+    type_order = {program_type: index for index, program_type in enumerate(program_types)}
+    rows.sort(key=lambda row: (
+        type_order.get(row.program_name.split(' - ', 1)[0], 99),
+        _ascii_fold(row.faculty),
+        _ascii_fold(row.department),
+        _ascii_fold(row.program_name),
+    ))
+
+    if target_faculty:
+        folded_target = _ascii_fold(_faculty_display_name(target_faculty))
+        rows = [
+            row for row in rows
+            if _ascii_fold(row.faculty) == folded_target
+        ]
+
+    return rows
+
+
+def _question_explicitly_mentions_faculty(question: str, faculty: str) -> bool:
+    if not faculty:
+        return False
+    folded_question = _ascii_fold(question)
+    display_name = _faculty_display_name(faculty)
+    aliases = _get_faculty_aliases().get(display_name, (display_name.lower(),))
+    return any(_ascii_fold(alias) in folded_question for alias in aliases if alias)
+
+
+def _catalog_listing_context(
+    question: str,
+    keywords: list[str],
+    listing: bool,
+    target_faculty: str = '',
+) -> tuple[str, list[str]]:
+    if not _asks_for_catalog_listing(question, keywords, listing):
+        return '', []
+
+    folded = _ascii_fold(question)
+    effective_target_faculty = (
+        target_faculty if _question_explicitly_mentions_faculty(question, target_faculty) else ''
+    )
+    asks_faculties = 'fakulte' in folded or 'fakulteler' in folded
+    asks_departments = any(term in folded for term in ('bolum', 'bolumler'))
+    asks_programs = any(term in folded for term in ('program', 'programlar'))
+
+    # "Bölüm" soruları Türkçe kullanımda çoğunlukla lisans bölümlerini sorar.
+    # "Tüm programlar" denirse bütün Bologna program türleri listelenir.
+    program_types = _requested_program_types(
+        question,
+        default_for_departments=asks_departments or bool(effective_target_faculty),
+    )
+    rows = _program_rows_for_types(program_types, target_faculty=effective_target_faculty)
+    if not rows:
+        return '', []
+
+    sources = [
+        BOLOGNA_UNIT_SELECTION_URLS[program_type]
+        for program_type in program_types
+        if program_type in BOLOGNA_UNIT_SELECTION_URLS
+    ]
+
+    answer_lines: list[str] = []
+
+    if asks_faculties and not asks_departments and not asks_programs:
+        faculties = []
+        seen = set()
+        for row in rows:
+            if 'fakültesi' not in row.faculty.lower():
+                continue
+            key = _ascii_fold(row.faculty)
+            if key in seen:
+                continue
+            seen.add(key)
+            faculties.append(row.faculty)
+
+        if not faculties:
+            return '', []
+
+        answer_lines.append("Acıbadem Üniversitesi'ndeki fakülteler şunlardır:")
+        answer_lines.extend(f"{index}. {faculty}" for index, faculty in enumerate(faculties, 1))
+    else:
+        if effective_target_faculty:
+            display_faculty = _faculty_display_name(effective_target_faculty)
+            answer_lines.append(f"{display_faculty} bünyesindeki bölümler/programlar şunlardır:")
+        elif program_types == ['Lisans']:
+            answer_lines.append("Acıbadem Üniversitesi'nde lisans düzeyindeki bölümler/programlar şunlardır:")
+        else:
+            answer_lines.append("Acıbadem Üniversitesi'ndeki programlar şunlardır:")
+
+        current_group = ''
+        index = 1
+        for row in rows:
+            program_type = row.program_name.split(' - ', 1)[0] if ' - ' in row.program_name else ''
+            group = row.faculty if program_types == ['Lisans'] else f"{program_type} | {row.faculty}"
+            if group != current_group:
+                answer_lines.append(f"\n{group}:")
+                current_group = group
+
+            display_name = row.department or row.program_name.split(' - ', 1)[-1]
+            answer_lines.append(f"{index}. {display_name}")
+            index += 1
+
+    context = "=== DOĞRUDAN KATALOG YANITI ===\nYANIT:\n" + '\n'.join(answer_lines)
+    return context, sources
+
+
+def _requested_course_plan_units(question: str) -> list[tuple[str, int]]:
+    folded = _ascii_fold(question)
+
+    semester_match = re.search(r'\b([1-8])\s*[\.\-]?\s*(?:yariyil|donem|semester)\b', folded)
+    if semester_match:
+        return [('semester', int(semester_match.group(1)))]
+
+    class_match = re.search(r'\b([1-6])\s*[\.\-]?\s*(?:sinif|sene|yil)\b', folded)
+    if class_match:
+        return [('year', int(class_match.group(1)))]
+
+    word_years = {
+        1: ('birinci sinif', 'ilk sinif', 'birinci yil', 'ilk yil'),
+        2: ('ikinci sinif', 'ikinci yil'),
+        3: ('ucuncu sinif', 'ucuncu yil'),
+        4: ('dorduncu sinif', 'dorduncu yil', 'son sinif'),
+    }
+    for year, phrases in word_years.items():
+        if any(phrase in folded for phrase in phrases):
+            return [('year', year)]
+
+    if 'guz' in folded:
+        return [('semester', 1)]
+    if 'bahar' in folded:
+        return [('semester', 2)]
+    return []
+
+
+def _requested_semesters(question: str) -> list[int]:
+    semesters: list[int] = []
+    for unit_type, number in _requested_course_plan_units(question):
+        if unit_type == 'semester':
+            semesters.append(number)
+        elif unit_type == 'year':
+            semesters.extend([number * 2 - 1, number * 2])
+    return semesters
+
+
+def _select_lisans_program_for_department(department: str, question: str):
+    from scraper.models import BolognaProgram
+
+    if not department:
+        return None
+
+    display_name = _department_display_name(department)
+    dept_folded = _ascii_fold(display_name)
+    question_folded = _ascii_fold(question)
+    wants_english = 'ingilizce' in question_folded or 'english' in question_folded
+
+    candidates = []
+    for program in BolognaProgram.objects.exclude(content='').filter(program_name__startswith='Lisans -'):
+        haystack = f"{program.faculty} {program.department} {program.program_name}"
+        if dept_folded not in _ascii_fold(haystack):
+            continue
+
+        score = 0
+        title_folded = _ascii_fold(haystack)
+        if _ascii_fold(program.department).startswith(dept_folded):
+            score += 8
+        if wants_english and ('ingilizce' in title_folded or 'english' in title_folded):
+            score += 4
+        if not wants_english and 'ingilizce' not in title_folded:
+            score += 2
+        candidates.append((score, program))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def _course_plan_sections(content: str) -> dict[tuple[str, int], str]:
+    pattern = re.compile(r'(?m)^(\d+)\.(Yarıyıl|Sınıf) Ders Planı\s*$')
+    matches = list(pattern.finditer(content or ''))
+    sections: dict[tuple[str, int], str] = {}
+    for index, match in enumerate(matches):
+        unit_type = 'semester' if match.group(2) == 'Yarıyıl' else 'year'
+        number = int(match.group(1))
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        sections[(unit_type, number)] = content[start:end].strip()
+    return sections
+
+
+def _parse_course_plan_section(section: str, *, include_elective_options: bool = False) -> list[dict[str, str]]:
+    lines = [line.strip() for line in section.splitlines() if line.strip()]
+    header_labels = {
+        'Ders Kodu', 'Ders Adı', 'T+U+L', 'Zorunlu/Seçmeli',
+        'AKTS', 'Grup Ders Adedi', 'Öğretim Şekli',
+    }
+    courses: list[dict[str, str]] = []
+    index = 0
+
+    while index < len(lines):
+        line = lines[index]
+        if line in header_labels:
+            index += 1
+            continue
+        if line == 'Toplam AKTS':
+            break
+        if not re.match(r'^[A-Z]{2,5}\s+\d{3,4}$', line):
+            index += 1
+            continue
+
+        code = line
+        name = lines[index + 1] if index + 1 < len(lines) else ''
+        credit = lines[index + 2] if index + 2 < len(lines) and re.match(r'^\d+\+\d+\+\d+$', lines[index + 2]) else ''
+        course_type = ''
+        teaching = ''
+
+        cursor = index + 3 if credit else index + 2
+        if cursor < len(lines) and lines[cursor] in {'Zorunlu', 'Seçmeli'}:
+            course_type = lines[cursor]
+            cursor += 1
+
+        while cursor < len(lines):
+            candidate = lines[cursor]
+            if candidate == 'Toplam AKTS' or re.match(r'^[A-Z]{2,5}\s+\d{3,4}$', candidate):
+                break
+            if candidate in {'Yüz Yüze', 'Uzaktan Eğitim', 'Karma'}:
+                teaching = candidate
+                cursor += 1
+                break
+            cursor += 1
+
+        if name:
+            courses.append({
+                'code': code,
+                'name': name,
+                'credit': credit,
+                'type': course_type,
+                'teaching': teaching,
+            })
+
+        index = max(cursor, index + 1)
+
+    if include_elective_options:
+        return courses
+
+    filtered_courses: list[dict[str, str]] = []
+    skipping_elective_options = False
+    for course in courses:
+        folded_name = _ascii_fold(course['name'])
+        is_generic_elective = course['type'] == 'Seçmeli' and (
+            folded_name == 'secmeli ders'
+            or 'secmeli ders grubu' in folded_name
+            or 'secmelileri' in folded_name
+            or 'teknik secmeli' in folded_name
+            or folded_name == 'elective course'
+        )
+        if is_generic_elective:
+            filtered_courses.append(course)
+            skipping_elective_options = True
+            continue
+        if course['type'] == 'Seçmeli':
+            continue
+        if skipping_elective_options and course['type'] == 'Seçmeli':
+            continue
+        if course['type'] != 'Seçmeli':
+            skipping_elective_options = False
+        filtered_courses.append(course)
+
+    return filtered_courses
+
+
+def _course_plan_listing_context(question: str, department: str) -> tuple[str, list[str]]:
+    units = _requested_course_plan_units(question)
+    if not department:
+        return '', []
+
+    folded = _ascii_fold(question)
+    if 'ders' not in folded and 'mufredat' not in folded and 'course' not in folded:
+        return '', []
+
+    program = _select_lisans_program_for_department(department, question)
+    if not program:
+        return '', []
+
+    sections = _course_plan_sections(program.content)
+    if not sections:
+        return '', []
+
+    if not units and any(term in folded for term in ('ders plani', 'mufredat', 'curriculum')):
+        units = sorted(sections, key=lambda item: (0 if item[0] == 'semester' else 1, item[1]))
+
+    include_elective_options = any(term in folded for term in (
+        'secmeli dersler', 'secmeli ders seçenek', 'secmeli ders secenek',
+        'secmeli seçenek', 'secmeli secenek', 'elective options',
+    ))
+
+    if not units:
+        return '', []
+
+    answer_lines = [f"{program.department} ders planı aşağıdaki gibidir:"]
+
+    found_any = False
+    rendered_units: list[tuple[str, int]] = []
+    for unit_type, number in units:
+        candidate_units: list[tuple[str, int]]
+        if unit_type == 'year' and ('year', number) not in sections:
+            candidate_units = [('semester', number * 2 - 1), ('semester', number * 2)]
+        else:
+            candidate_units = [(unit_type, number)]
+
+        for candidate_type, candidate_number in candidate_units:
+            section = sections.get((candidate_type, candidate_number), '')
+            if not section:
+                continue
+            courses = _parse_course_plan_section(
+                section,
+                include_elective_options=include_elective_options,
+            )
+            if not courses:
+                continue
+            found_any = True
+            rendered_units.append((candidate_type, candidate_number))
+            label = f"{candidate_number}. Yarıyıl" if candidate_type == 'semester' else f"{candidate_number}. Sınıf"
+            answer_lines.append(f"\n{label}:")
+            for course in courses:
+                details = []
+                if course['credit']:
+                    details.append(course['credit'])
+                if course['type']:
+                    details.append(course['type'])
+                suffix = f" ({', '.join(details)})" if details else ''
+                answer_lines.append(f"- {course['code']} - {course['name']}{suffix}")
+
+    if not found_any:
+        return '', []
+
+    if len(units) == 1 and units[0][0] == 'year':
+        answer_lines[0] = f"{program.department} {units[0][1]}. sınıf öğrencilerinin aldığı dersler şunlardır:"
+    elif len(rendered_units) == 1 and rendered_units[0][0] == 'semester':
+        answer_lines[0] = f"{program.department} programında {rendered_units[0][1]}. yarıyıl dersleri şunlardır:"
+
+    context = "=== DOĞRUDAN DERS PLANI YANITI ===\nYANIT:\n" + '\n'.join(answer_lines)
+    return context, [_course_source_url(program.url)]
+
+
+def _course_code_context(question: str, course_codes: list[str], department: str = '') -> tuple[str, list[str]]:
+    from scraper.models import BolognaProgram
+
+    if not course_codes:
+        return '', []
+
+    folded_question = _ascii_fold(question)
+    wants_detail = any(term in folded_question for term in ('icerik', 'icerig', 'amac', 'detay', 'hakkinda'))
+    candidate_programs = list(BolognaProgram.objects.exclude(content='').filter(program_name__startswith='Lisans -'))
+    if department:
+        display_name = _department_display_name(department)
+        dept_folded = _ascii_fold(display_name)
+        narrowed = [
+            program for program in candidate_programs
+            if dept_folded in _ascii_fold(f"{program.faculty} {program.department} {program.program_name}")
+        ]
+        if narrowed:
+            candidate_programs = narrowed
+
+    rows = []
+    seen = set()
+    for program in candidate_programs:
+        sections = _course_plan_sections(program.content)
+        for unit, section in sections.items():
+            courses = _parse_course_plan_section(section, include_elective_options=True)
+            for course in courses:
+                for code in course_codes:
+                    if course['code'].replace(' ', '') != _format_course_code(code).replace(' ', ''):
+                        continue
+                    key = (program.url, course['code'])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    rows.append((program, unit, course))
+                    break
+        if len(rows) >= 8:
+            break
+
+    if not rows:
+        return '', []
+
+    answer_lines = []
+    sources = []
+    for program, unit, course in rows:
+        details = _fetch_bologna_course_row(program.url, course['code'])
+        akts = details.get('akts', '') if details else ''
+        tul = details.get('tul', '') if details else course['credit']
+        kind = details.get('kind', '') if details else course['type']
+        teaching = details.get('teaching_mode', '') if details else course['teaching']
+        url = details.get('detail_url') if details else ''
+        source_url = url or (details.get('url') if details else _course_source_url(program.url))
+        if source_url and source_url not in sources:
+            sources.append(source_url)
+
+        label = f"{unit[1]}. Yarıyıl" if unit[0] == 'semester' else f"{unit[1]}. Sınıf"
+        answer_lines.extend([
+            f"{program.department} - {label}",
+            f"Ders Kodu: {details.get('code', course['code']) if details else course['code']}",
+            f"Ders Adı: {details.get('name', course['name']) if details else course['name']}",
+        ])
+        if tul:
+            answer_lines.append(f"T+U+L: {tul}")
+        if kind:
+            answer_lines.append(f"Tür: {kind}")
+        if akts:
+            answer_lines.append(f"AKTS: {akts}")
+        if teaching:
+            answer_lines.append(f"Öğretim Şekli: {teaching}")
+        if wants_detail and details and details.get('detail_text'):
+            answer_lines.append('')
+            answer_lines.append(details['detail_text'][:3500])
+        answer_lines.append('')
+
+    if len(rows) > 1 and not department:
+        answer_lines.insert(0, "Bu ders kodu birden fazla lisans programında görünüyor; programlara göre bilgiler:")
+    context = "=== DOĞRUDAN DERS KODU YANITI ===\nYANIT:\n" + '\n'.join(answer_lines).strip()
+    return context, sources or [_course_source_url(rows[0][0].url)]
+
+
+def _general_info_context(question: str, intent: str) -> tuple[str, list[str]]:
+    from scraper.models import BolognaProgram
+
+    folded = _ascii_fold(question)
+    topic_map = [
+        (('yemek', 'yemekhane', 'kafeterya'), 'Yemek Hizmetleri'),
+        (('ogrenci kulup', 'kulup', 'kulupler', 'topluluk'), 'Öğrenci Kulüpleri'),
+        (('konaklama', 'yurt', 'barinma'), 'Konaklama'),
+        (('saglik hizmet', 'revir', 'saglik merkezi'), 'Sağlık Hizmetleri'),
+        (('spor', 'sosyal yasam', 'sosyal yaşam'), 'Spor ve Sosyal Yaşam'),
+        (('engelli', 'erisilebilir', 'erişilebilir'), 'Engelli Öğrenci Hizmetleri'),
+        (('kampus', 'kampüs', 'yerleske', 'yerleşke'), 'Kampüs'),
+        (('akts katalog', 'ects catalog'), 'AKTS Kataloğu'),
+    ]
+
+    for terms, page_name in topic_map:
+        if not any(term in folded for term in terms):
+            continue
+        page = BolognaProgram.objects.filter(program_name=page_name).first()
+        if page and page.content:
+            return f"=== {page.faculty} - {page.program_name} ===\n{page.content}", [page.url]
+
+    return '', []
+
+
+def _person_from_title_line(line: str) -> str:
+    compact_line = re.sub(r'[^a-z]', '', _ascii_fold(line))
+    title_label = ''
+    title_end = -1
+    for label in PERSON_TITLE_LABELS:
+        compact_label = re.sub(r'[^a-z]', '', _ascii_fold(label))
+        if compact_label not in compact_line:
+            continue
+        match = re.search(re.escape(label), line, flags=re.IGNORECASE)
+        if not match:
+            continue
+        title_label = label
+        title_end = match.end()
+        break
+
+    if not title_label or title_end < 0:
+        return ''
+
+    tail = line[title_end:].strip(' -,:;')
+    words = re.findall(r'[A-Za-zÇĞİÖŞÜçğıöşü]+', tail)
+    name_words = []
+    for word in words:
+        folded = _ascii_fold(word)
+        if folded in STOP_WORDS or folded in PERSON_QUERY_DROP_WORDS:
+            break
+        if not (word[:1].isupper() or word.isupper()):
+            break
+        name_words.append(word)
+        if len(name_words) >= 4:
+            break
+
+    if len(name_words) < 2:
+        return ''
+    return f"{title_label} {_titlecase_person_name(' '.join(name_words))}"
+
+
+def _department_head_context(department: str) -> tuple[str, list[str]]:
+    if not department:
+        return '', []
+
+    results = _search_targeted_head_pages(department, max_results=2)
+    display_department = _department_display_name(department)
+    for result in results:
+        lines = [line.strip() for line in result.get('text', '').splitlines() if line.strip()]
+        for idx, line in enumerate(lines):
+            if 'bolum baskani' not in _ascii_fold(line):
+                continue
+            for candidate_line in lines[idx:idx + 4]:
+                person = _person_from_title_line(candidate_line)
+                if person:
+                    answer = f"{display_department} Bölüm Başkanı kaynaklarda {person} olarak geçiyor."
+                    return "=== DOĞRUDAN KİŞİ YANITI ===\nYANIT:\n" + answer, [result['url']]
+
+    return '', []
+
+
+def _person_lookup_requested(question: str) -> bool:
+    folded = _ascii_fold(question)
+    return any(term in folded for term in PERSON_LOOKUP_TERMS)
+
+
+def _clean_person_token(token: str) -> str:
+    return re.sub(r"^[^A-Za-zÇĞİÖŞÜçğıöşü]+|[^A-Za-zÇĞİÖŞÜçğıöşü]+$", '', token or '')
+
+
+def _looks_like_catalog_unit_name(text: str) -> bool:
+    folded = _ascii_fold(text)
+    if not folded:
+        return False
+
+    for alias_map in (_get_department_aliases(), _get_faculty_aliases()):
+        for canonical, aliases in alias_map.items():
+            names = set(aliases) | {canonical}
+            for name in names:
+                name_folded = _ascii_fold(name)
+                if folded == name_folded:
+                    return True
+                if _contains_fuzzy_phrase(folded, name_folded, threshold=0.94):
+                    return True
+    return False
+
+
+def _extract_person_name_query(question: str) -> str:
+    if not _person_lookup_requested(question):
+        return ''
+
+    # Drop common Turkish possessive/case suffixes after apostrophes: Bulut'un -> Bulut.
+    cleaned = re.sub(
+        r"['’](nin|nın|nun|nün|in|ın|un|ün|den|dan|ten|tan|de|da|te|ta|e|a|i|ı|u|ü)\b",
+        '',
+        question or '',
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r'[?!.:,;()\[\]{}"“”/\\|_+=<>]', ' ', cleaned)
+
+    tokens: list[str] = []
+    for raw_token in cleaned.split():
+        token = _clean_person_token(raw_token)
+        folded = _ascii_fold(token)
+        if not token or len(folded) <= 1:
+            continue
+        if folded in PERSON_QUERY_DROP_WORDS or stem_turkish(folded) in PERSON_QUERY_DROP_WORDS:
+            continue
+        if folded in STOP_WORDS:
+            continue
+        if re.search(r'\d', folded):
+            continue
+        tokens.append(folded)
+
+    # Person lookups need an exact full name. This prevents "dekan kimdir?"
+    # style questions from guessing a person through semantic similarity.
+    if len(tokens) < 2 or len(tokens) > 4:
+        return ''
+
+    candidate = ' '.join(tokens)
+    if _looks_like_catalog_unit_name(candidate):
+        return ''
+
+    return candidate
+
+
+def _person_name_query_variants(name_query: str) -> list[str]:
+    variants = [name_query]
+    parts = name_query.split()
+    if len(parts) < 2:
+        return variants
+
+    last = parts[-1]
+    suffixes = (
+        'lerinin', 'larının', 'nin', 'nın', 'nun', 'nün',
+        'den', 'dan', 'ten', 'tan', 'de', 'da', 'te', 'ta',
+        'in', 'ın', 'un', 'ün', 'e', 'a', 'i', 'ı', 'u', 'ü',
+    )
+    for suffix in suffixes:
+        if not last.endswith(suffix):
+            continue
+        stripped = last[:-len(suffix)]
+        if len(stripped) < 3:
+            continue
+        variant = ' '.join(parts[:-1] + [stripped])
+        if variant not in variants:
+            variants.append(variant)
+
+    return variants
+
+
+def _person_name_pattern(name_folded: str) -> re.Pattern:
+    parts = [re.escape(part) for part in name_folded.split() if part]
+    return re.compile(r'(?<![a-z0-9])' + r'\s+'.join(parts) + r'(?![a-z0-9])')
+
+
+def _person_name_in_text(text: str, name_folded: str) -> bool:
+    if not text or not name_folded:
+        return False
+    return bool(_person_name_pattern(name_folded).search(_ascii_fold(text)))
+
+
+def _titlecase_person_name(name: str) -> str:
+    parts = []
+    for part in re.split(r'(\s+)', (name or '').strip()):
+        if not part or part.isspace():
+            parts.append(part)
+        elif part.isupper() or part.islower():
+            parts.append(part[:1].upper() + part[1:].lower())
+        else:
+            parts.append(part)
+    return ''.join(parts).strip()
+
+
+def _display_name_from_text(text: str, name_folded: str, fallback: str) -> str:
+    expected = name_folded.split()
+    if expected:
+        words = re.findall(r'[A-Za-zÇĞİÖŞÜçğıöşü]+', text or '')
+        for idx in range(0, len(words) - len(expected) + 1):
+            candidate_words = words[idx:idx + len(expected)]
+            if ' '.join(_ascii_fold(word) for word in candidate_words) == name_folded:
+                return _titlecase_person_name(' '.join(candidate_words))
+    return _titlecase_person_name(fallback)
+
+
+def _person_context_lines(text: str, name_folded: str, radius: int = 3) -> list[str]:
+    raw_lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
+    if not raw_lines:
+        return []
+
+    pattern = _person_name_pattern(name_folded)
+    for idx, line in enumerate(raw_lines):
+        if pattern.search(_ascii_fold(line)):
+            start = max(0, idx - radius)
+            end = min(len(raw_lines), idx + radius + 1)
+            return raw_lines[start:end]
+    return []
+
+
+def _person_context_snippet(text: str, name_folded: str, max_chars: int = 1400) -> str:
+    lines = _person_context_lines(text, name_folded, radius=4)
+    if lines:
+        return '\n'.join(lines)[:max_chars]
+
+    folded = _ascii_fold(text)
+    match = _person_name_pattern(name_folded).search(folded)
+    if not match:
+        return ''
+    start = max(0, match.start() - 450)
+    return (text or '')[start:start + max_chars].strip()
+
+
+def _extract_person_title(text: str, name_folded: str) -> str:
+    lines = _person_context_lines(text, name_folded, radius=2)
+    compact_labels = [
+        (re.sub(r'[^a-z]', '', _ascii_fold(label)), label)
+        for label in PERSON_TITLE_LABELS
+    ]
+    for line in lines:
+        compact_line = re.sub(r'[^a-z]', '', _ascii_fold(line))
+        if not _person_name_in_text(line, name_folded):
+            continue
+        for compact_label, label in compact_labels:
+            if compact_label and compact_label in compact_line:
+                return label
+
+    for idx, line in enumerate(lines):
+        if not _person_name_in_text(line, name_folded) or idx == 0:
+            continue
+        previous = lines[idx - 1]
+        compact_previous = re.sub(r'[^a-z]', '', _ascii_fold(previous))
+        for compact_label, label in compact_labels:
+            if compact_previous == compact_label or compact_label in compact_previous:
+                return label
+    return ''
+
+
+def _extract_person_role(text: str, name_folded: str) -> str:
+    block = '\n'.join(_person_context_lines(text, name_folded, radius=4))
+    folded_block = _ascii_fold(block)
+    for needle, label in PERSON_ROLE_LABELS:
+        if needle in folded_block:
+            return label
+    return ''
+
+
+def _score_person_source(url: str, title: str, snippet: str, role: str, title_label: str, source_kind: str) -> int:
+    folded_url = _ascii_fold(url)
+    folded_title = _ascii_fold(title)
+    score = 20
+    if source_kind == 'bologna':
+        score += 65
+    if '/akademik-kadro' in folded_url or '/academic-staff' in folded_url:
+        score += 80
+    if '/bolum-baskaninin-mesaji' in folded_url:
+        score += 75
+    if '/yonetim' in folded_url or '/management' in folded_url:
+        score += 45
+    if '/akademik/' in folded_url:
+        score += 35
+    if '/haberler/' in folded_url or '/duyurular/' in folded_url:
+        score -= 8
+    if role:
+        score += 35
+        if role == 'Dekan':
+            score += 60
+        elif role == 'Dekan Yardımcısı':
+            score += 50
+        elif role == 'Bölüm Başkanı':
+            score += 45
+        elif role in {'Program Başkanı', 'Anabilim Dalı Başkanı'}:
+            score += 20
+    if title_label:
+        score += 20
+    if 'akademik kadro' in folded_title:
+        score += 25
+    if snippet:
+        score += min(20, len(snippet) // 120)
+    return score
+
+
+def _find_exact_person_matches(name_folded: str) -> list[dict]:
+    from scraper.models import BolognaProgram, ScrapedPage
+
+    matches: list[dict] = []
+
+    for program in BolognaProgram.objects.exclude(content='').only(
+        'url', 'faculty', 'department', 'program_name', 'content'
+    ).iterator(chunk_size=50):
+        haystack = f"{program.faculty}\n{program.department}\n{program.program_name}\n{program.content}"
+        if not _person_name_in_text(haystack, name_folded):
+            continue
+        title = f"{program.faculty} - {program.program_name}"
+        snippet = _person_context_snippet(program.content, name_folded)
+        title_label = _extract_person_title(program.content, name_folded)
+        role = _extract_person_role(program.content, name_folded)
+        matches.append({
+            'source_kind': 'bologna',
+            'url': program.url,
+            'title': title,
+            'text': program.content,
+            'snippet': snippet,
+            'faculty': program.faculty,
+            'department': program.department,
+            'person_title': title_label,
+            'role': role,
+            'score': _score_person_source(program.url, title, snippet, role, title_label, 'bologna'),
+        })
+
+    for page in ScrapedPage.objects.exclude(text='').only(
+        'url', 'title', 'description', 'text'
+    ).iterator(chunk_size=100):
+        haystack = f"{page.title}\n{page.description}\n{page.url}\n{page.text}"
+        if not _person_name_in_text(haystack, name_folded):
+            continue
+        snippet = _person_context_snippet(page.text, name_folded)
+        title_label = _extract_person_title(page.text, name_folded)
+        role = _extract_person_role(page.text, name_folded)
+        matches.append({
+            'source_kind': 'scraped',
+            'url': page.url,
+            'title': page.title,
+            'text': page.text,
+            'snippet': snippet,
+            'faculty': infer_faculty(page.title, page.text, page.url),
+            'department': infer_department(page.title, page.text, page.url),
+            'person_title': title_label,
+            'role': role,
+            'score': _score_person_source(page.url, page.title, snippet, role, title_label, 'scraped'),
+        })
+
+    matches.sort(key=lambda item: item['score'], reverse=True)
+    return matches
+
+
+def _first_person_email(matches: list[dict], name_folded: str) -> str:
+    name_parts = [part for part in name_folded.split() if len(part) > 2]
+    for match in matches:
+        for email in re.findall(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}', match.get('text', '')):
+            local = _ascii_fold(email.split('@', 1)[0].replace('.', ' '))
+            if all(part in local for part in name_parts[:2]):
+                return email
+    return ''
+
+
+def _person_role_phrase(role: str, department: str, faculty: str) -> str:
+    if not role:
+        return ''
+    if role == 'Bölüm Başkanı' and department:
+        return f"{department} Bölüm Başkanı"
+    if role in {'Dekan', 'Dekan Yardımcısı'} and faculty:
+        suffix = 'Dekanı' if role == 'Dekan' else 'Dekan Yardımcısı'
+        return f"{faculty} {suffix}"
+    return role
+
+
+def _person_lookup_context(question: str) -> tuple[str, list[str]]:
+    name_query = _extract_person_name_query(question)
+    if not name_query:
+        return '', []
+
+    matches: list[dict] = []
+    name_folded = ''
+    for candidate_name in _person_name_query_variants(name_query):
+        name_folded = _ascii_fold(candidate_name)
+        matches = _find_exact_person_matches(name_folded)
+        if matches:
+            name_query = candidate_name
+            break
+    if not matches:
+        return '', []
+
+    best_text = '\n'.join(match.get('snippet') or match.get('text', '')[:1200] for match in matches[:4])
+    display_name = _display_name_from_text(best_text, name_folded, name_query)
+    title_label = next((match['person_title'] for match in matches if match.get('person_title')), '')
+    titled_name = f"{title_label} {display_name}".strip() if title_label else display_name
+
+    department = next((match['department'] for match in matches if match.get('department')), '')
+    faculty = next((match['faculty'] for match in matches if match.get('faculty')), '')
+    role = next((match['role'] for match in matches if match.get('role')), '')
+    role_phrase = _person_role_phrase(role, department, faculty)
+    email = _first_person_email(matches, name_folded)
+
+    unit_phrase = ''
+    if faculty and department:
+        unit_phrase = f"{faculty} {department} Bölümü"
+    elif department:
+        unit_phrase = f"{department} Bölümü"
+    elif faculty:
+        unit_phrase = faculty
+
+    answer_lines: list[str] = []
+    if unit_phrase:
+        answer_lines.append(
+            f"{titled_name}, Acıbadem Üniversitesi {unit_phrase} bünyesinde görev yapan bir akademisyendir."
+        )
+    else:
+        answer_lines.append(f"{titled_name}, Acıbadem Üniversitesi kaynaklarında yer alan bir akademisyendir.")
+
+    if role_phrase:
+        answer_lines.append(f"Kaynaklarda görevi {role_phrase} olarak geçiyor.")
+    if email:
+        answer_lines.append(f"E-posta: {email}")
+
+    # Keep the model out of this path: exact full-name matches are safer than semantic inference.
+    sources = []
+    for match in matches:
+        url = match.get('url', '')
+        if url and url not in sources:
+            sources.append(url)
+        if len(sources) >= 4:
+            break
+
+    context = "=== DOĞRUDAN KİŞİ YANITI ===\nYANIT:\n" + '\n'.join(answer_lines)
+    return context, sources
+
+
 def get_context_for_question(question: str) -> tuple[str, list[str]]:
     """
     Intent-aware retrieval pipeline.
@@ -2690,6 +3760,22 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
         f"[RETRIEVAL] question='{question[:80]}' intent={intent} "
         f"keywords={keywords} entities={entities}"
     )
+
+    person_context, person_sources = _person_lookup_context(question)
+    if person_context:
+        logger.info("[RETRIEVAL] direct exact-person lookup")
+        return person_context, person_sources
+
+    if intent not in {INTENT_STAFF, INTENT_CONTACT, INTENT_ADMISSION, INTENT_COURSE}:
+        catalog_context, catalog_sources = _catalog_listing_context(
+            question,
+            keywords,
+            listing,
+            target_faculty=target_faculty,
+        )
+        if catalog_context:
+            logger.info("[RETRIEVAL] direct catalog listing")
+            return catalog_context, catalog_sources
 
     if _is_general_university_address_question(question):
         logger.info("[RETRIEVAL] canonical university address lookup")
@@ -2719,7 +3805,18 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
         if context_parts:
             return '\n\n'.join(context_parts), sources
 
+    if intent in (INTENT_CAMPUS, INTENT_STUDENT_LIFE, INTENT_GENERAL, INTENT_BOLOGNA):
+        general_context, general_sources = _general_info_context(question, intent)
+        if general_context:
+            logger.info("[RETRIEVAL] direct general info page")
+            return general_context, general_sources
+
     if is_head_question(question) and target_department:
+        head_context, head_sources = _department_head_context(target_department)
+        if head_context:
+            logger.info("[RETRIEVAL] direct department head lookup for department=%s", target_department)
+            return head_context, head_sources
+
         logger.info("[RETRIEVAL] targeted head lookup for department=%s", target_department)
         for result in search_scraped_pages(question, max_results=3):
             if result['url'] in sources:
@@ -2729,8 +3826,23 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
         if context_parts:
             return '\n\n'.join(context_parts), sources
 
+    if target_department and intent in (INTENT_COURSE, INTENT_BOLOGNA, INTENT_DEPARTMENT):
+        course_plan_context, course_plan_sources = _course_plan_listing_context(question, target_department)
+        if course_plan_context:
+            logger.info("[RETRIEVAL] direct course plan listing for department=%s", target_department)
+            return course_plan_context, course_plan_sources
+
     if entities['course_codes']:
         effective_dept = target_department or _department_from_course_codes(entities['course_codes'])
+        course_code_context, course_code_sources = _course_code_context(
+            question,
+            entities['course_codes'],
+            effective_dept,
+        )
+        if course_code_context:
+            logger.info("[RETRIEVAL] direct course-code lookup for course_codes=%s", entities['course_codes'])
+            return course_code_context, course_code_sources
+
         logger.info(
             "[RETRIEVAL] targeted course lookup for department=%s course_codes=%s",
             effective_dept or 'any',
@@ -2773,9 +3885,21 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
         if context_parts:
             return '\n\n'.join(context_parts), sources
 
-    if intent == INTENT_STAFF and target_department:
-        logger.info("[RETRIEVAL] targeted staff lookup for department=%s", target_department)
-        for result in search_scraped_pages(question, max_results=1):
+    if intent == INTENT_STAFF and (target_department or target_faculty):
+        scope = target_department or target_faculty
+        logger.info("[RETRIEVAL] targeted staff lookup for scope=%s", scope)
+
+        staff_results = []
+        if target_department:
+            staff_results = _search_targeted_staff_pages(target_department, max_results=2)
+
+        # Some faculties (e.g. Eczacılık) have an empty /akademik-kadro hub.
+        # When the dedicated staff page is missing/empty, fall back to faculty-
+        # level pages: /yonetim and per-anabilim-dalı pages have actual names.
+        if not staff_results:
+            staff_results = _search_targeted_faculty_staff_pages(scope, max_results=4)
+
+        for result in staff_results:
             if result['url'] in sources:
                 continue
             context_parts.append(f"=== {result['title']} ===\n{result['text']}")

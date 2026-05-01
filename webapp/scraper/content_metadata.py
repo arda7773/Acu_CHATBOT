@@ -36,8 +36,6 @@ FACULTY_KEYWORDS = {
     'saglik bilimleri fakultesi': 'Sağlık Bilimleri Fakültesi',
     'mühendislik ve doğa bilimleri fakültesi': 'Mühendislik ve Doğa Bilimleri Fakültesi',
     'muhendislik ve doga bilimleri fakultesi': 'Mühendislik ve Doğa Bilimleri Fakültesi',
-    'fen edebiyat fakültesi': 'Fen Edebiyat Fakültesi',
-    'fen edebiyat fakultesi': 'Fen Edebiyat Fakültesi',
     'lisansüstü eğitim enstitüsü': 'Lisansüstü Eğitim Enstitüsü',
     'lisansustu egitim enstitusu': 'Lisansüstü Eğitim Enstitüsü',
     'meslek yüksekokulu': 'Meslek Yüksekokulu',
