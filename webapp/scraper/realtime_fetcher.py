@@ -803,9 +803,19 @@ _INTENT_SIGNALS: dict[str, list[str]] = {
         'program çıktıları', 'öğrenme çıktıları', 'bilgi paketi',
         'mezuniyet koşulları', 'mezuniyet şartları', 'program yeterlilikleri',
         'yeterlilikleri', 'istihdam olanakları', 'alınacak derece',
-        'çalışabilir', 'calisabilir', 'istihdam', 'kariyer',
+        'çalışabilir', 'calisabilir', 'istihdam olanağı', 'kariyer imkân',
         'mezun olunca', 'mezun iş', 'nerede çalış', 'nerede calis',
         'iş imkânı', 'is imkani', 'iş olanağı', 'is olanagi',
+        'mezuniyet için', 'mezuniyet icin', 'mezun olmak için', 'mezun olmak icin',
+        'not ortalaması', 'not ortalamasi', 'gpa koşul', 'mezunluk koşul',
+        'mezunluk şart', 'mezunluk sart',
+        'not dağılımı', 'not dagilimi', 'başarı oranı', 'basari orani',
+        'geçme oranı', 'gecme orani', 'sınıf geçme oranı',
+        'değerlendirme ağırlık', 'degerlendirme agrlik',
+        'vize ağırlık', 'vize agrlik', 'final ağırlık', 'final agrlik',
+        'sınav ağırlık', 'sinav agrlik', 'ödev ağırlık', 'odev agrlik',
+        'önkoşul', 'onkosul', 'ön koşul', 'on kosul',
+        'iş yükü', 'is yuku', 'ağırlıklı not', 'agirlikli not',
     ],
     INTENT_STAFF: [
         'akademik kadro', 'akadem kadro', 'akadem kadrosu', 'akadem kadrosunu',
@@ -813,12 +823,23 @@ _INTENT_SIGNALS: dict[str, list[str]] = {
         'profesör', 'doçent', 'araştırma görevlisi', 'faculty members', 'kimler var',
     ],
     INTENT_ADMISSION: [
-        'başvuru', 'kayıt', 'kabul', 'yks', 'tyt', 'ayt', 'puan',
+        'başvuru', 'kabul', 'yks', 'tyt', 'ayt', 'puan',
         'kontenjan', 'taban puan', 'yerleşme', 'nasıl girilir',
         'admission', 'application', 'requirements', 'burs', 'ücret', 'harç',
         'fiyat', 'fiyatlar', 'ücretler', 'öğrenim ücreti', 'eğitim ücreti',
         'tuition fee', 'tuition fees', 'ne kadar', 'kaç para', 'maliyet',
         'burslu ücret', 'bursuz ücret', 'indirimli ücret',
+        'hazırlık', 'hazirlik', 'hazırlık sınıfı', 'hazirlik sinifi',
+        'muafiyet', 'muafiyet sınavı', 'muafiyet sinavi', 'prep class',
+        'ingilizce eğitim', 'ingilizce egitim',
+        'çift anadal', 'cift anadal', 'çift ana dal', 'cift ana dal',
+        'yandal', 'yan dal', 'double major', 'ikinci anadal', 'ikinci ana dal',
+        'ödeme', 'odeme', 'ödeme planı', 'odeme plani', 'taksit',
+        'mali işlem', 'mali islem', 'mali hizmet',
+        'kayıt yaptır', 'kayit yaptir', 'kayıt için', 'kayit icin',
+        'kayıt tarihi', 'kayit tarihi', 'kayıt belgesi', 'kayıt süreci', 'öğrenci kaydı',
+        'kayıt işlemi', 'kayit islemi', 'kayıt koşulu', 'kayit kosulu',
+        'kayıt ol', 'kayit ol', 'kaydolmak', 'kaydolma',
     ],
     INTENT_EXCHANGE: [
         'erasmus', 'erasmus+', 'değişim programı', 'degisim programi',
@@ -832,36 +853,75 @@ _INTENT_SIGNALS: dict[str, list[str]] = {
     INTENT_CONTACT: [
         'iletişim', 'adres', 'telefon', 'e-posta', 'eposta',
         'contact', 'phone', 'email', 'address', 'nerede', 'lokasyon',
+        'öğrenci işleri', 'ogrenci isleri', 'öğrenci danışmanlık', 'ogrenci danismanlik',
+        'ofis saati', 'ofis saat', 'ofis saatleri', 'ofis saatler',
+        'randevu', 'randevu al', 'randevu alma',
+        'koordinatör', 'koordinator',
+        'görüşme saati', 'gorusme saati', 'görüşme saatleri',
+        'danışma saati', 'danisma saati', 'danışma günü', 'danisma gunu',
+        'görüşme saatleri', 'gorusme saatleri', 'müsait saatler', 'musait saatler',
     ],
     INTENT_CAMPUS: [
         'kampüs', 'kampus', 'yerleşke', 'bina', 'tesis', 'tesisler',
         'kütüphane', 'kutuphane', 'laboratuvar', 'lab ', 'kafeterya',
         'kantin', 'yemekhane', 'ulaşım', 'ulasim', 'metro', 'otobüs',
         'servis', 'spor salonu', 'spor merkezi', 'sosyal alan', 'öğrenci merkezi',
+        'wifi', 'wi-fi', 'internet erişim', 'bilgi işlem', 'bilgi islem',
+        'öğrenci e-posta', 'ogrenci eposta', 'öğrenci mail', 'eposta hesap',
+        'devamsızlık', 'devamsizlik', 'sınav yönetmelik', 'sinav yonetmelik',
+        'notlandırma', 'not sistemi',
+        'klinik staj', 'klinik uygulama', 'uygulama dersi', 'pratik eğitim', 'pratik egitim',
+        'klinik rotasyon', 'klinik rotasyonu',
+        'bütünleme', 'butunleme', 'tek ders sınavı', 'tek ders sinavi', 'tek ders',
+        'not yükseltme', 'not yukseltme', 'mazeret sınavı', 'mazeret sinavi',
+        'lms', 'öğrenci portalı', 'ogrenci portali', 'e-öğrenme', 'e-ogrenme',
+        'online platform', 'ders portali', 'öğrenci sistemi', 'ogrenci sistemi',
+        'rubrik', 'rubric', 'değerlendirme kriteri', 'degerlendirme kriteri',
     ],
     INTENT_STUDENT_LIFE: [
         'öğrenci yaşamı', 'ogrenci yasami', 'kulüp', 'kulüpler', 'aktivite',
         'sosyal', 'barınma', 'yurt', 'konaklama', 'öğrenci hayatı',
+        'staj', 'kariyer', 'kariyer merkezi',
+        'psikolojik', 'psikolojik danışmanlık', 'psikolojik danismanlik',
+        'psikolojik destek', 'öğrenci destek', 'mezuniyet sonrası', 'mezuniyet sonrasi',
+        'rehberlik', 'engelli', 'engelli öğrenci', 'engelli ogrenci', 'erisilebilir',
+        'akademik danışmanlık', 'akademik danisman', 'akademik danismanlik',
+        'topluluk', 'öğrenci kulübü', 'ogrenci kulubu',
     ],
     INTENT_COURSE: [
         'ders', 'dersler', 'kredi', 'ders kodu', 'ders içeriği',
         'haftalık ders', 'zorunlu ders', 'seçmeli ders', 'course', 'curriculum',
+        'ödev', 'odev', 'vize', 'ara sınav', 'ara sinav',
+        'ders kitabı', 'ders kitabi', 'kaynakça', 'kaynak listesi', 'okuma listesi',
+        'önkoşul', 'onkosul',
+        'konu başlığı', 'konu basligi', 'haftalık konu', 'haftalik konu',
+        'grup projesi', 'grup proje', 'saha çalışması', 'saha calisma', 'proje teslim',
+        'denklik', 'saydirma', 'kredi transferi', 'kredi transfer',
+        'sınav politikası', 'sinav politikasi',
+        'geçme notu', 'gecme notu',
     ],
     INTENT_ANNOUNCEMENT: [
         'haber', 'haberler', 'duyuru', 'duyurular', 'son dakika',
         'announcement', 'news', 'etkinlik', 'etkinlikler',
+        'akademik takvim', 'academic calendar', 'ders ekle-bırak', 'ders ekle birak',
+        'ekle-bırak', 'sınav takvimi', 'sinav takvimi', 'kayıt dönemi', 'kayit donemi',
+        'kota', 'çakışma', 'cakisma', 'ders çakışma', 'ders cakisma',
+        'kayıt öncelik', 'kayit oncelik', 'kayıt kuralı', 'kayit kurali',
     ],
     INTENT_DEPARTMENT: [
         'fakülte', 'bölüm', 'department', 'faculty', 'lisans', 'yüksek lisans',
         'doktora', 'önlisans', 'mühendislik', 'tıp', 'hukuk',
         'hemşirelik', 'psikoloji', 'diş', 'eczacılık',
+        'araştırma proje', 'arastirma proje', 'araştırma', 'arastirma',
+        'bilimsel', 'research project', 'akademik araştırma', 'akademik arastirma',
+        'bilimsel çalışma', 'bilimsel calisma', 'araştırmacı', 'arastirmaci',
     ],
 }
 
 _INTENT_PRIORITY = [
-    INTENT_BOLOGNA, INTENT_STAFF, INTENT_EXCHANGE, INTENT_ADMISSION, INTENT_CONTACT,
-    INTENT_CAMPUS, INTENT_STUDENT_LIFE, INTENT_COURSE,
-    INTENT_ANNOUNCEMENT, INTENT_DEPARTMENT,
+    INTENT_BOLOGNA, INTENT_STAFF, INTENT_EXCHANGE, INTENT_ANNOUNCEMENT, INTENT_ADMISSION,
+    INTENT_CONTACT, INTENT_CAMPUS, INTENT_STUDENT_LIFE, INTENT_COURSE,
+    INTENT_DEPARTMENT,
 ]
 
 
@@ -976,10 +1036,17 @@ _QUERY_EXPANSIONS: dict[str, list[str]] = {
     INTENT_CAMPUS: [
         'kampüs', 'yerleşke', 'tesis', 'bina', 'kütüphane',
         'ulaşım', 'spor', 'kafeterya', 'öğrenci hayatı', 'laboratuvar',
+        'wifi', 'internet', 'bilgi işlem', 'öğrenci hizmetleri',
+        'devamsızlık', 'sınav yönetmelik', 'not sistemi',
+        'bütünleme sınavı', 'tek ders sınavı', 'mazeret sınavı', 'not yükseltme',
+        'lms', 'öğrenci portalı', 'e-öğrenme sistemi', 'klinik uygulama',
     ],
     INTENT_STUDENT_LIFE: [
         'öğrenci kulüpleri', 'sosyal aktiviteler', 'barınma', 'yurt',
         'konaklama', 'öğrenci yaşamı', 'kampüs hayatı',
+        'staj imkânları', 'kariyer merkezi', 'psikolojik danışmanlık',
+        'mezuniyet sonrası destek', 'engelli öğrenci hizmetleri',
+        'akademik danışmanlık', 'rehberlik hizmetleri',
     ],
     INTENT_COURSE: [
         'ders listesi', 'müfredat', 'zorunlu dersler', 'seçmeli dersler',
@@ -988,10 +1055,12 @@ _QUERY_EXPANSIONS: dict[str, list[str]] = {
     INTENT_DEPARTMENT: [
         'bölüm hakkında', 'program bilgisi', 'fakülte', 'akademik program',
         'lisans programı', 'yüksek lisans programı',
+        'araştırma merkezi', 'araştırma projeleri', 'bilimsel çalışma', 'akademik araştırma',
     ],
     INTENT_ADMISSION: [
         'başvuru koşulları', 'taban puan', 'kontenjan', 'yks puanı',
         'kayıt gereklilikleri', 'kabul şartları', 'burs imkânları',
+        'çift anadal koşulları', 'yandal programı', 'ödeme planı', 'taksit seçenekleri',
     ],
     INTENT_EXCHANGE: [
         'erasmus', 'exchange programs', 'institutional agreements',
@@ -1046,8 +1115,9 @@ def _looks_like_bologna_detail_question(question: str) -> bool:
         'mezuniyet kosullari', 'mezuniyet sartlari', 'program yeterlilikleri',
         'program cikt', 'ogrenme cikt', 'istihdam olanaklari', 'alinacak derece',
         'kabul kosullari', 'ust kademeye gecis',
-        'calisabilir', 'istihdam', 'kariyer', 'is imkani', 'is olanagi',
+        'calisabilir', 'istihdam olanak', 'kariyer imkan', 'is imkani', 'is olanagi',
         'nerede calis', 'mezun olunca', 'mezun is',
+        'mezuniyet icin', 'not ortalamas', 'mezun olmak', 'gpa kosul', 'mezunluk kosul',
     )
     return any(term in normalized for term in detail_terms)
 
@@ -2465,6 +2535,27 @@ def _curated_scraped_fallback(intent: str, max_results: int = 3) -> list[dict]:
             Q(title__icontains='Exchange') |
             Q(title__icontains='Institutional Agreements')
         )
+    elif intent == INTENT_ANNOUNCEMENT:
+        query = (
+            Q(url__icontains='akademik-takvim') |
+            Q(url__icontains='academic-calendar') |
+            Q(title__icontains='Akademik Takvim') |
+            Q(title__icontains='Academic Calendar') |
+            Q(title__icontains='Takvim')
+        )
+    elif intent == INTENT_STUDENT_LIFE:
+        query = (
+            Q(url__icontains='ogrenci-yasami') |
+            Q(url__icontains='student-life') |
+            Q(url__icontains='kulupler') |
+            Q(url__icontains='engelli') |
+            Q(url__icontains='danismanlik') |
+            Q(url__icontains='rehberlik') |
+            Q(title__icontains='Öğrenci Kulüpleri') |
+            Q(title__icontains='Engelli') |
+            Q(title__icontains='Danışmanlık') |
+            Q(title__icontains='Rehberlik')
+        )
     else:
         return []
 
@@ -2536,6 +2627,54 @@ def _search_transport_pages(max_results: int = 3) -> list[dict]:
     return results
 
 
+def _is_academic_calendar_question(question: str) -> bool:
+    folded = _ascii_fold(question)
+    return any(term in folded for term in (
+        'akademik takvim', 'academic calendar',
+        'ders ekle birak', 'ekle birak', 'ders ekleme birakma',
+        'sinav takvimi', 'sinav haftasi',
+        'kayit donemi', 'donem takvimi',
+    ))
+
+
+def _search_academic_calendar_pages(max_results: int = 3) -> list[dict]:
+    from scraper.models import ScrapedPage
+
+    query = (
+        Q(url__icontains='akademik-takvim') |
+        Q(url__icontains='academic-calendar') |
+        Q(title__icontains='Akademik Takvim') |
+        Q(title__icontains='Academic Calendar') |
+        Q(text__icontains='ders ekle-bırak') |
+        Q(text__icontains='akademik takvim')
+    )
+
+    pages = list(
+        ScrapedPage.objects.filter(query)
+        .exclude(url__icontains='/etkinlikler/')[:20]
+    )
+
+    keywords = [
+        'akademik', 'takvim', 'kayıt', 'kayit', 'ekle', 'birak', 'bırak',
+        'sınav', 'sinav', 'haftası', 'dönem', 'donem', 'yarıyıl', 'yariyil',
+        'ekle-bırak', 'calendar', 'registration',
+    ]
+    ranked_pages = sorted(
+        pages,
+        key=lambda page: score_page_relevance(page.title + ' ' + page.url, page, keywords),
+        reverse=True,
+    )
+
+    results = []
+    for page in ranked_pages[:max_results]:
+        results.append({
+            'url': page.url,
+            'title': page.title,
+            'text': extract_relevant_snippet(page.text, keywords, max_chars=2600),
+        })
+    return results
+
+
 def _supplement_semantic_candidates(question: str, intent: str) -> list[dict]:
     candidates: list[dict] = []
 
@@ -2578,7 +2717,7 @@ def _supplement_semantic_candidates(question: str, intent: str) -> list[dict]:
                 'is_noisy': page_type in _NOISY_PAGE_TYPES,
             })
 
-    if intent in (INTENT_CAMPUS, INTENT_CONTACT, INTENT_ADMISSION, INTENT_STUDENT_LIFE, INTENT_EXCHANGE):
+    if intent in (INTENT_CAMPUS, INTENT_CONTACT, INTENT_ADMISSION, INTENT_STUDENT_LIFE, INTENT_EXCHANGE, INTENT_ANNOUNCEMENT):
         for result in search_scraped_pages(question, max_results=6):
             page_type = classify_page_type(result['url'], result['title'], result['text'])
             candidates.append({
@@ -3613,9 +3752,9 @@ def _general_info_context(question: str, intent: str) -> tuple[str, list[str]]:
         (('yemek', 'yemekhane', 'kafeterya'), 'Yemek Hizmetleri'),
         (('ogrenci kulup', 'kulup', 'kulupler', 'topluluk'), 'Öğrenci Kulüpleri'),
         (('konaklama', 'yurt', 'barinma'), 'Konaklama'),
-        (('saglik hizmet', 'revir', 'saglik merkezi'), 'Sağlık Hizmetleri'),
-        (('spor', 'sosyal yasam', 'sosyal yaşam'), 'Spor ve Sosyal Yaşam'),
-        (('engelli', 'erisilebilir', 'erişilebilir'), 'Engelli Öğrenci Hizmetleri'),
+        (('saglik hizmet', 'revir', 'saglik merkezi', 'psikolojik', 'psikolojik danismanlik', 'psikolojik destek', 'ogrenci destek', 'rehberlik'), 'Sağlık Hizmetleri'),
+        (('spor', 'sosyal yasam', 'sosyal yaşam', 'staj', 'kariyer', 'kariyer merkezi', 'mezuniyet sonrasi'), 'Spor ve Sosyal Yaşam'),
+        (('engelli', 'engelli ogrenci', 'erisilebilir', 'erişilebilir', 'engel destek'), 'Engelli Öğrenci Hizmetleri'),
         (('kampus', 'kampüs', 'yerleske', 'yerleşke'), 'Kampüs'),
         (('akts katalog', 'ects catalog'), 'AKTS Kataloğu'),
     ]
@@ -4113,6 +4252,16 @@ def get_context_for_question(question: str) -> tuple[str, list[str]]:
             context_parts.append(f"=== Acıbadem Üniversitesi Adres ===\n{address}")
             sources.append(CANONICAL_CONTACT_URL)
         for result in _search_transport_pages(max_results=3):
+            if result['url'] in sources:
+                continue
+            context_parts.append(f"=== {result['title']} ===\n{result['text']}")
+            sources.append(result['url'])
+        if context_parts:
+            return '\n\n'.join(context_parts), sources
+
+    if _is_academic_calendar_question(question):
+        logger.info("[RETRIEVAL] targeted academic calendar lookup")
+        for result in _search_academic_calendar_pages(max_results=3):
             if result['url'] in sources:
                 continue
             context_parts.append(f"=== {result['title']} ===\n{result['text']}")
