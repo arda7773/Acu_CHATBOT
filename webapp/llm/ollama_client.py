@@ -28,6 +28,8 @@ FALLBACK_ANSWER = (
     "https://www.acibadem.edu.tr adresini ziyaret edebilir veya üniversiteyle iletişime geçebilirsiniz."
 )
 
+_FALLBACK_FIRST_SENTENCE = "Bu konuda elimde yeterli bilgi bulunmuyor."
+
 _COURSE_DETAIL_TERMS = (
     'ders içeriği', 'ders icerigi', 'dersinin içeriği', 'dersinin icerigi',
     'dersin içeriği', 'dersin icerigi', 'ders hakkında', 'ders hakkinda',
@@ -63,6 +65,26 @@ def build_context_fallback(context: str) -> str:
 
     summary = ' '.join(clean_lines[:3])
     return f"Bulabildiğim bilgilere göre, {summary}"
+
+
+def _strip_fallback_from_answer(answer: str) -> str:
+    """Remove fallback text the LLM appended to an otherwise valid answer."""
+    stripped = answer.strip()
+    stripped_lower = stripped.lower()
+    fa_lower = FALLBACK_ANSWER.lower()
+    fs_lower = _FALLBACK_FIRST_SENTENCE.lower()
+
+    if stripped_lower in (fa_lower, fs_lower):
+        return stripped
+
+    for phrase_lower in (fa_lower, fs_lower):
+        idx = stripped_lower.rfind(phrase_lower)
+        if idx > 30:
+            cleaned = stripped[:idx].strip()
+            if len(cleaned) >= 20:
+                return cleaned
+
+    return stripped
 
 
 def is_low_quality_answer(answer: str) -> bool:
@@ -475,7 +497,7 @@ TALİMATLAR:
         )
         response.raise_for_status()
         data = response.json()
-        answer = data['message']['content'].strip()
+        answer = _strip_fallback_from_answer(data['message']['content'].strip())
         if is_low_quality_answer(answer):
             logger.warning("Low-quality model answer detected, returning fallback")
             return FALLBACK_ANSWER
@@ -596,16 +618,16 @@ TALİMATLAR:
             if not piece:
                 continue
             full_answer.append(piece)
-            yield piece
 
-        answer = ''.join(full_answer).strip()
+        answer = _strip_fallback_from_answer(''.join(full_answer).strip())
         if not answer:
             yield FALLBACK_ANSWER
             return
         if is_low_quality_answer(answer):
             logger.warning("Low-quality streamed model answer detected, streaming fallback")
-            yield f"\n{FALLBACK_ANSWER}"
+            yield FALLBACK_ANSWER
             return
+        yield answer
     except requests.Timeout:
         logger.error("Ollama streaming request timed out")
         yield "Üzgünüm, yapay zeka servisi şu an yanıt vermiyor. Lütfen birkaç saniye bekleyip tekrar deneyin."
